@@ -62,23 +62,23 @@ type Server struct {
 	config       *Config
 	log          *logger.Logger
 	sessionStore *session.Store
-	
+
 	// Transport handlers
 	upstreamHandler   *transport.ServerHandler
 	downstreamHandler *transport.ServerHandler
-	
+
 	// HTTP servers
 	upstreamServer   *http.Server
 	downstreamServer *http.Server
-	
+
 	// Session to downstream connection mapping
 	downstreamConns   map[uuid.UUID]*transport.Connection
 	downstreamConnsMu sync.RWMutex
-	
+
 	// Stream to destination connection mapping (NAT table)
 	natTable   map[natKey]*natEntry
 	natTableMu sync.RWMutex
-	
+
 	// State
 	running  int32
 	shutdown chan struct{}
@@ -334,9 +334,9 @@ func (s *Server) registerDownstreamConnection(ctx context.Context, conn *transpo
 	s.downstreamConns[pkt.SessionID] = conn
 	s.downstreamConnsMu.Unlock()
 
-	s.log.Debug().
+	s.log.Info().
 		Str("session_id", pkt.SessionID.String()).
-		Msg("Registered downstream connection")
+		Msg("Client downstream connected")
 
 	// Keep reading (for keep-alive, etc.)
 	for {
@@ -348,7 +348,7 @@ func (s *Server) registerDownstreamConnection(ctx context.Context, conn *transpo
 		default:
 		}
 
-		_, err := conn.Read()
+		data, err := conn.Read()
 		if err != nil {
 			s.downstreamConnsMu.Lock()
 			delete(s.downstreamConns, pkt.SessionID)
@@ -356,7 +356,40 @@ func (s *Server) registerDownstreamConnection(ctx context.Context, conn *transpo
 			conn.Close()
 			return
 		}
+
+		reply, replyErr := s.handleDownstreamPacket(pkt.SessionID, data)
+		if replyErr != nil {
+			s.log.Debug().Err(replyErr).Msg("Failed to handle downstream packet")
+			continue
+		}
+		if len(reply) > 0 {
+			if writeErr := conn.Write(reply); writeErr != nil {
+				s.log.Debug().Err(writeErr).Msg("Failed to write downstream reply")
+				return
+			}
+		}
 	}
+}
+
+func (s *Server) handleDownstreamPacket(sessionID uuid.UUID, data []byte) ([]byte, error) {
+	pkt, err := protocol.Unmarshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if pkt.SessionID != sessionID {
+		return nil, fmt.Errorf("downstream packet session mismatch")
+	}
+
+	if pkt.IsKeepAlive() && !pkt.IsAck() {
+		ack, ackErr := protocol.NewKeepAliveAckPacket(sessionID)
+		if ackErr != nil {
+			return nil, ackErr
+		}
+		return ack.Marshal()
+	}
+
+	return nil, nil
 }
 
 // handleUpstreamPacket handles a packet received from upstream.
@@ -371,6 +404,13 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 		Bool("data", pkt.IsData()).
 		Bool("fin", pkt.IsFin()).
 		Msg("Received upstream packet")
+
+	if pkt.IsKeepAlive() {
+		if !pkt.IsAck() {
+			_ = s.sendDownstreamPacket(pkt.SessionID, pkt.StreamID, protocol.FlagKeepAlive|protocol.FlagAck, nil)
+		}
+		return
+	}
 
 	// Handle handshake for new streams (contains destination info)
 	if pkt.IsHandshake() && pkt.IsData() && len(pkt.Payload) > 0 {

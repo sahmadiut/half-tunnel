@@ -14,6 +14,7 @@ import (
 	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/internal/mux"
 	"github.com/sahmadiut/half-tunnel/internal/protocol"
+	"github.com/sahmadiut/half-tunnel/internal/retry"
 	"github.com/sahmadiut/half-tunnel/internal/session"
 	"github.com/sahmadiut/half-tunnel/internal/socks5"
 	"github.com/sahmadiut/half-tunnel/internal/transport"
@@ -44,6 +45,9 @@ type Config struct {
 	SOCKS5Password string
 	// PortForwards is the list of port forwarding rules
 	PortForwards []PortForward
+	// Reconnection settings
+	ReconnectEnabled bool
+	ReconnectConfig  *retry.Config
 	// Connection settings
 	PingInterval     time.Duration
 	WriteTimeout     time.Duration
@@ -60,6 +64,8 @@ func DefaultConfig() *Config {
 		SOCKS5Addr:       "127.0.0.1:1080",
 		SOCKS5Enabled:    true,
 		PortForwards:     []PortForward{},
+		ReconnectEnabled: true,
+		ReconnectConfig:  retry.DefaultConfig(),
 		PingInterval:     30 * time.Second,
 		WriteTimeout:     10 * time.Second,
 		ReadTimeout:      60 * time.Second,
@@ -70,26 +76,28 @@ func DefaultConfig() *Config {
 
 // Client is the Half-Tunnel entry client.
 type Client struct {
-	config   *Config
-	log      *logger.Logger
-	session  *session.Session
-	mux      *mux.Multiplexer
-	upstream *transport.Connection
+	config     *Config
+	log        *logger.Logger
+	session    *session.Session
+	mux        *mux.Multiplexer
+	upstream   *transport.Connection
 	downstream *transport.Connection
-	socks5   *socks5.Server
-	
+	socks5     *socks5.Server
+
 	// Port forward listeners
 	portForwardListeners []net.Listener
-	
+
 	// Stream management
-	streamConns  map[uint32]*streamConn
+	streamConns   map[uint32]*streamConn
 	streamConnsMu sync.RWMutex
-	
+
 	// State
-	running  int32
-	shutdown chan struct{}
-	wg       sync.WaitGroup
-	mu       sync.RWMutex
+	running      int32
+	reconnecting int32
+	ctx          context.Context
+	shutdown     chan struct{}
+	wg           sync.WaitGroup
+	mu           sync.RWMutex
 }
 
 // streamConn holds the connection associated with a stream.
@@ -107,6 +115,9 @@ func New(config *Config, log *logger.Logger) *Client {
 	if log == nil {
 		log = logger.NewDefault()
 	}
+	if config.ReconnectConfig == nil {
+		config.ReconnectConfig = retry.DefaultConfig()
+	}
 
 	return &Client{
 		config:      config,
@@ -122,6 +133,8 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("client already running")
 	}
 
+	c.ctx = ctx
+
 	// Create a new session
 	c.session = session.New()
 	c.mux = mux.NewMultiplexer(c.session)
@@ -130,48 +143,22 @@ func (c *Client) Start(ctx context.Context) error {
 		Str("session_id", c.session.ID.String()).
 		Msg("Created new session")
 
-	// Connect to upstream (Domain A)
-	upstreamConfig := transport.DefaultConfig(c.config.UpstreamURL)
-	upstreamConfig.HandshakeTimeout = c.config.HandshakeTimeout
-	upstreamConfig.WriteTimeout = c.config.WriteTimeout
-
-	var err error
-	c.upstream, err = transport.Dial(ctx, upstreamConfig)
-	if err != nil {
-		return fmt.Errorf("failed to connect to upstream: %w", err)
-	}
-
-	c.log.Info().
-		Str("url", c.config.UpstreamURL).
-		Msg("Connected to upstream")
-
-	// Connect to downstream (Domain B)
-	downstreamConfig := transport.DefaultConfig(c.config.DownstreamURL)
-	downstreamConfig.HandshakeTimeout = c.config.HandshakeTimeout
-	downstreamConfig.ReadTimeout = c.config.ReadTimeout
-
-	c.downstream, err = transport.Dial(ctx, downstreamConfig)
-	if err != nil {
-		c.upstream.Close()
-		return fmt.Errorf("failed to connect to downstream: %w", err)
-	}
-
-	c.log.Info().
-		Str("url", c.config.DownstreamURL).
-		Msg("Connected to downstream")
-
-	// Send handshake packet
-	if err := c.sendHandshake(); err != nil {
-		c.cleanup()
-		return fmt.Errorf("failed to send handshake: %w", err)
-	}
-
 	// Set packet handler for sending through upstream
 	c.mux.SetPacketHandler(c.sendPacket)
+
+	if err := c.connect(ctx); err != nil {
+		c.cleanup()
+		return err
+	}
 
 	// Start downstream reader goroutine
 	c.wg.Add(1)
 	go c.readDownstream(ctx)
+
+	if c.config.PingInterval > 0 {
+		c.wg.Add(1)
+		go c.keepaliveLoop(ctx)
+	}
 
 	// Start SOCKS5 server if enabled
 	if c.config.SOCKS5Enabled {
@@ -228,6 +215,8 @@ func (c *Client) cleanup() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	atomic.StoreInt32(&c.reconnecting, 0)
+
 	// Close SOCKS5 server
 	if c.socks5 != nil {
 		c.socks5.Close()
@@ -254,12 +243,7 @@ func (c *Client) cleanup() {
 	}
 
 	// Close transport connections
-	if c.upstream != nil {
-		c.upstream.Close()
-	}
-	if c.downstream != nil {
-		c.downstream.Close()
-	}
+	c.cleanupConnections()
 }
 
 // sendHandshake sends the initial handshake packet to both upstream and downstream.
@@ -289,11 +273,26 @@ func (c *Client) sendHandshake() error {
 
 // sendPacket sends a packet through the upstream connection.
 func (c *Client) sendPacket(pkt *protocol.Packet) error {
+	c.mu.RLock()
+	upstream := c.upstream
+	c.mu.RUnlock()
+	if upstream == nil {
+		if c.shouldReconnect() {
+			c.triggerReconnect("upstream")
+		}
+		return transport.ErrConnectionClosed
+	}
 	data, err := pkt.Marshal()
 	if err != nil {
 		return err
 	}
-	return c.upstream.Write(data)
+	if err := upstream.Write(data); err != nil {
+		if c.shouldReconnect() {
+			c.triggerReconnect("upstream")
+		}
+		return err
+	}
+	return nil
 }
 
 // readDownstream reads packets from the downstream connection.
@@ -309,10 +308,24 @@ func (c *Client) readDownstream(ctx context.Context) {
 		default:
 		}
 
-		data, err := c.downstream.Read()
+		c.mu.RLock()
+		downstream := c.downstream
+		c.mu.RUnlock()
+		if downstream == nil {
+			if c.shouldReconnect() {
+				c.triggerReconnect("downstream")
+				return
+			}
+			return
+		}
+
+		data, err := downstream.Read()
 		if err != nil {
-			if !c.downstream.IsClosed() {
+			if !downstream.IsClosed() {
 				c.log.Error().Err(err).Msg("Error reading from downstream")
+			}
+			if c.shouldReconnect() {
+				c.triggerReconnect("downstream")
 			}
 			return
 		}
@@ -336,6 +349,17 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 			Str("expected", c.session.ID.String()).
 			Str("got", pkt.SessionID.String()).
 			Msg("Received packet with wrong session ID")
+		return
+	}
+
+	if pkt.IsKeepAlive() && pkt.IsAck() {
+		return
+	}
+
+	if pkt.IsKeepAlive() {
+		if err := c.sendKeepAliveAck(); err != nil {
+			c.log.Debug().Err(err).Msg("Failed to send keepalive ack")
+		}
 		return
 	}
 
@@ -370,6 +394,11 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 
 // handleConnect handles a SOCKS5 CONNECT request.
 func (c *Client) handleConnect(ctx context.Context, req *socks5.ConnectRequest) error {
+	if atomic.LoadInt32(&c.reconnecting) == 1 {
+		_ = c.socks5.SendFailureReply(req.ClientConn, socks5.ReplyGeneralFailure)
+		return fmt.Errorf("client reconnecting")
+	}
+
 	// Open a new stream
 	streamID, err := c.mux.OpenStream()
 	if err != nil {
@@ -480,12 +509,193 @@ func (c *Client) closeStream(streamID uint32) {
 	_ = c.mux.CloseStream(streamID)
 }
 
+func (c *Client) closeAllStreams() {
+	c.streamConnsMu.Lock()
+	for _, sc := range c.streamConns {
+		select {
+		case <-sc.done:
+		default:
+			close(sc.done)
+		}
+		sc.conn.Close()
+	}
+	c.streamConns = make(map[uint32]*streamConn)
+	c.streamConnsMu.Unlock()
+}
+
+func (c *Client) connect(ctx context.Context) error {
+	upstreamConfig := transport.DefaultConfig(c.config.UpstreamURL)
+	upstreamConfig.HandshakeTimeout = c.config.HandshakeTimeout
+	upstreamConfig.WriteTimeout = c.config.WriteTimeout
+	upstreamConfig.ReadTimeout = c.config.ReadTimeout
+
+	downstreamConfig := transport.DefaultConfig(c.config.DownstreamURL)
+	downstreamConfig.HandshakeTimeout = c.config.HandshakeTimeout
+	downstreamConfig.ReadTimeout = c.config.ReadTimeout
+	downstreamConfig.WriteTimeout = c.config.WriteTimeout
+
+	upstream, err := transport.Dial(ctx, upstreamConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to upstream: %w", err)
+	}
+
+	downstream, err := transport.Dial(ctx, downstreamConfig)
+	if err != nil {
+		upstream.Close()
+		return fmt.Errorf("failed to connect to downstream: %w", err)
+	}
+
+	c.mu.Lock()
+	c.upstream = upstream
+	c.downstream = downstream
+	c.mu.Unlock()
+
+	c.log.Info().
+		Str("url", c.config.UpstreamURL).
+		Msg("Connected to upstream")
+
+	c.log.Info().
+		Str("url", c.config.DownstreamURL).
+		Msg("Connected to downstream")
+
+	if err := c.sendHandshake(); err != nil {
+		c.cleanupConnections()
+		return fmt.Errorf("failed to send handshake: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) keepaliveLoop(ctx context.Context) {
+	defer c.wg.Done()
+
+	ticker := time.NewTicker(c.config.PingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.shutdown:
+			return
+		case <-ticker.C:
+			if err := c.sendKeepAlive(); err != nil {
+				c.log.Debug().Err(err).Msg("Failed to send keepalive")
+				if c.shouldReconnect() {
+					c.triggerReconnect("keepalive")
+				}
+			}
+		}
+	}
+}
+
+func (c *Client) sendKeepAlive() error {
+	pkt, err := protocol.NewKeepAlivePacket(c.session.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.sendPacket(pkt)
+}
+
+func (c *Client) sendKeepAliveAck() error {
+	c.mu.RLock()
+	downstream := c.downstream
+	c.mu.RUnlock()
+	if downstream == nil {
+		return transport.ErrConnectionClosed
+	}
+
+	pkt, err := protocol.NewKeepAliveAckPacket(c.session.ID)
+	if err != nil {
+		return err
+	}
+
+	data, err := pkt.Marshal()
+	if err != nil {
+		return err
+	}
+
+	return downstream.Write(data)
+}
+
+func (c *Client) cleanupConnections() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.upstream != nil {
+		c.upstream.Close()
+		c.upstream = nil
+	}
+	if c.downstream != nil {
+		c.downstream.Close()
+		c.downstream = nil
+	}
+}
+
+func (c *Client) shouldReconnect() bool {
+	return c.config.ReconnectEnabled && atomic.LoadInt32(&c.running) == 1
+}
+
+func (c *Client) triggerReconnect(source string) {
+	if !atomic.CompareAndSwapInt32(&c.reconnecting, 0, 1) {
+		return
+	}
+
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		defer atomic.StoreInt32(&c.reconnecting, 0)
+		c.handleReconnect(ctx, source)
+	}()
+}
+
+func (c *Client) handleReconnect(ctx context.Context, source string) {
+	if !c.shouldReconnect() {
+		return
+	}
+
+	c.log.Warn().Str("source", source).Msg("Connection lost, attempting reconnect")
+	c.cleanupConnections()
+	c.closeAllStreams()
+	c.mux.Close()
+	c.session = session.New()
+	c.mux = mux.NewMultiplexer(c.session)
+	c.mux.SetPacketHandler(c.sendPacket)
+
+	retryer := retry.New(c.config.ReconnectConfig)
+	for {
+		if ctx.Err() != nil || atomic.LoadInt32(&c.running) == 0 {
+			return
+		}
+
+		err := c.connect(ctx)
+		if err == nil {
+			c.log.Info().Str("session_id", c.session.ID.String()).Msg("Reconnected to server")
+			c.wg.Add(1)
+			go c.readDownstream(ctx)
+			return
+		}
+
+		c.log.Warn().Err(err).Msg("Reconnect attempt failed")
+		if waitErr := retryer.Wait(ctx); waitErr != nil {
+			c.log.Error().Err(waitErr).Msg("Reconnect stopped")
+			return
+		}
+	}
+}
+
 // formatConnectPayload creates the payload for a connect request.
 // Format: [1 byte address type][address][2 bytes port]
 // Address type: 1 = IPv4, 3 = domain, 4 = IPv6
 func formatConnectPayload(host string, port uint16) []byte {
 	ip := net.ParseIP(host)
-	
+
 	var payload []byte
 	if ip != nil {
 		if ip4 := ip.To4(); ip4 != nil {
@@ -506,53 +716,53 @@ func formatConnectPayload(host string, port uint16) []byte {
 		payload[1] = byte(len(host))
 		copy(payload[2:2+len(host)], host)
 	}
-	
+
 	// Add port at the end
 	portOffset := len(payload) - 2
 	payload[portOffset] = byte(port >> 8)
 	payload[portOffset+1] = byte(port)
-	
+
 	return payload
 }
 
 // startPortForward starts a listener for a port forwarding rule.
 func (c *Client) startPortForward(ctx context.Context, pf PortForward) error {
 	listenAddr := fmt.Sprintf("%s:%d", pf.ListenHost, pf.ListenPort)
-	
+
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", listenAddr, err)
 	}
-	
+
 	c.mu.Lock()
 	c.portForwardListeners = append(c.portForwardListeners, listener)
 	c.mu.Unlock()
-	
+
 	name := pf.Name
 	if name == "" {
 		name = fmt.Sprintf("port-%d", pf.ListenPort)
 	}
-	
+
 	c.log.Info().
 		Str("name", name).
 		Str("listen_addr", listenAddr).
 		Str("remote_host", pf.RemoteHost).
 		Int("remote_port", pf.RemotePort).
 		Msg("Port forward started")
-	
+
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		c.runPortForwardListener(ctx, listener, pf)
 	}()
-	
+
 	return nil
 }
 
 // runPortForwardListener accepts connections and forwards them.
 func (c *Client) runPortForwardListener(ctx context.Context, listener net.Listener, pf PortForward) {
 	defer listener.Close()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -561,12 +771,12 @@ func (c *Client) runPortForwardListener(ctx context.Context, listener net.Listen
 			return
 		default:
 		}
-		
+
 		// Set a deadline so we can check for shutdown periodically
 		if tcpListener, ok := listener.(*net.TCPListener); ok {
 			_ = tcpListener.SetDeadline(time.Now().Add(1 * time.Second))
 		}
-		
+
 		conn, err := listener.Accept()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -581,7 +791,7 @@ func (c *Client) runPortForwardListener(ctx context.Context, listener net.Listen
 			c.log.Debug().Err(err).Msg("Error accepting port forward connection")
 			continue
 		}
-		
+
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -593,23 +803,23 @@ func (c *Client) runPortForwardListener(ctx context.Context, listener net.Listen
 // handlePortForwardConnection handles a single port forward connection.
 func (c *Client) handlePortForwardConnection(ctx context.Context, conn net.Conn, pf PortForward) {
 	defer conn.Close()
-	
+
 	// Open a new stream
 	streamID, err := c.mux.OpenStream()
 	if err != nil {
 		c.log.Error().Err(err).Msg("Failed to open stream for port forward")
 		return
 	}
-	
+
 	remoteHost := pf.RemoteHost
 	remotePort := uint16(pf.RemotePort)
-	
+
 	c.log.Debug().
 		Uint32("stream_id", streamID).
 		Str("remote_host", remoteHost).
 		Int("remote_port", int(remotePort)).
 		Msg("Opening stream for port forward")
-	
+
 	// Send connect packet to server
 	connectPayload := formatConnectPayload(remoteHost, remotePort)
 	if err := c.mux.SendPacket(streamID, protocol.FlagData|protocol.FlagHandshake, connectPayload); err != nil {
@@ -617,21 +827,21 @@ func (c *Client) handlePortForwardConnection(ctx context.Context, conn net.Conn,
 		c.log.Error().Err(err).Msg("Failed to send connect packet for port forward")
 		return
 	}
-	
+
 	// Register the stream connection
 	sc := &streamConn{
 		conn:     conn,
 		streamID: streamID,
 		done:     make(chan struct{}),
 	}
-	
+
 	c.streamConnsMu.Lock()
 	c.streamConns[streamID] = sc
 	c.streamConnsMu.Unlock()
-	
+
 	// Start reading from client and forwarding to upstream
 	go c.forwardClientToUpstream(ctx, sc)
-	
+
 	// Wait for the stream to complete
 	<-sc.done
 }

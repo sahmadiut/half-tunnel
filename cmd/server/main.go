@@ -5,12 +5,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/sahmadiut/half-tunnel/internal/config"
+	"github.com/sahmadiut/half-tunnel/internal/health"
+	"github.com/sahmadiut/half-tunnel/internal/metrics"
 	"github.com/sahmadiut/half-tunnel/internal/server"
 	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
@@ -103,6 +106,41 @@ func main() {
 
 	log.Info().Msg("Server is ready")
 
+	var metricsServer *metrics.Server
+	if cfg.Observability.Metrics.Enabled {
+		addr := fmt.Sprintf(":%d", cfg.Observability.Metrics.Port)
+		metricsServer = metrics.NewServer(&metrics.ServerConfig{
+			Addr: addr,
+			Path: cfg.Observability.Metrics.Path,
+		})
+		go func() {
+			if err := metricsServer.Start(); err != nil && err != http.ErrServerClosed {
+				log.Error().Err(err).Msg("Metrics server error")
+			}
+		}()
+		log.Info().Str("addr", addr).Str("path", cfg.Observability.Metrics.Path).Msg("Metrics server started")
+	}
+
+	var healthServer *health.Server
+	if cfg.Observability.Health.Enabled {
+		addr := fmt.Sprintf(":%d", cfg.Observability.Health.Port)
+		readyzPath := "/readyz"
+		if cfg.Observability.Health.Path == "/readyz" {
+			readyzPath = "/healthz"
+		}
+		healthServer = health.NewServer(&health.ServerConfig{
+			Addr:        addr,
+			HealthzPath: cfg.Observability.Health.Path,
+			ReadyzPath:  readyzPath,
+		})
+		go func() {
+			if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
+				log.Error().Err(err).Msg("Health server error")
+			}
+		}()
+		log.Info().Str("addr", addr).Str("path", cfg.Observability.Health.Path).Msg("Health server started")
+	}
+
 	// Periodic stats logging
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -123,6 +161,22 @@ func main() {
 	// Wait for shutdown
 	<-ctx.Done()
 	log.Info().Msg("Shutting down server")
+
+	if metricsServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("Metrics server shutdown error")
+		}
+		shutdownCancel()
+	}
+
+	if healthServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := healthServer.Shutdown(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("Health server shutdown error")
+		}
+		shutdownCancel()
+	}
 
 	// Stop the server with a timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)

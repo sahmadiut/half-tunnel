@@ -41,8 +41,8 @@ type Response struct {
 
 // Handler provides HTTP health check endpoints.
 type Handler struct {
-	checks     map[string]Check
-	checksMu   sync.RWMutex
+	checks       map[string]Check
+	checksMu     sync.RWMutex
 	checkTimeout time.Duration
 }
 
@@ -210,19 +210,19 @@ type Server struct {
 
 // ServerConfig holds configuration for the health server.
 type ServerConfig struct {
-	Addr          string
-	HealthzPath   string
-	ReadyzPath    string
-	CheckTimeout  time.Duration
+	Addr         string
+	HealthzPath  string
+	ReadyzPath   string
+	CheckTimeout time.Duration
 }
 
 // DefaultServerConfig returns a ServerConfig with sensible defaults.
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
-		Addr:          ":8080",
-		HealthzPath:   "/healthz",
-		ReadyzPath:    "/readyz",
-		CheckTimeout:  5 * time.Second,
+		Addr:         ":8080",
+		HealthzPath:  "/healthz",
+		ReadyzPath:   "/readyz",
+		CheckTimeout: 5 * time.Second,
 	}
 }
 
@@ -230,6 +230,12 @@ func DefaultServerConfig() *ServerConfig {
 func NewServer(config *ServerConfig) *Server {
 	if config == nil {
 		config = DefaultServerConfig()
+	}
+	if config.ReadyzPath == "" {
+		config.ReadyzPath = "/readyz"
+	}
+	if config.HealthzPath == "" {
+		config.HealthzPath = "/healthz"
 	}
 
 	handler := NewHandler(&Config{CheckTimeout: config.CheckTimeout})

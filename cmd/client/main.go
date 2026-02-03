@@ -5,12 +5,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/sahmadiut/half-tunnel/internal/client"
 	"github.com/sahmadiut/half-tunnel/internal/config"
+	"github.com/sahmadiut/half-tunnel/internal/metrics"
+	"github.com/sahmadiut/half-tunnel/internal/retry"
 	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
 
@@ -97,6 +101,11 @@ func main() {
 		}
 	}
 
+	readTimeout := time.Duration(0)
+	if cfg.Tunnel.Connection.KeepaliveInterval > 0 {
+		readTimeout = cfg.Tunnel.Connection.KeepaliveInterval * 2
+	}
+
 	// Create client configuration
 	clientConfig := &client.Config{
 		UpstreamURL:      cfg.Client.Upstream.URL,
@@ -104,9 +113,16 @@ func main() {
 		SOCKS5Addr:       socks5Addr,
 		SOCKS5Enabled:    cfg.SOCKS5.Enabled,
 		PortForwards:     clientPortForwards,
+		ReconnectEnabled: cfg.Tunnel.Reconnect.Enabled,
+		ReconnectConfig: &retry.Config{
+			InitialDelay: cfg.Tunnel.Reconnect.InitialDelay,
+			MaxDelay:     cfg.Tunnel.Reconnect.MaxDelay,
+			Multiplier:   cfg.Tunnel.Reconnect.Multiplier,
+			Jitter:       cfg.Tunnel.Reconnect.Jitter,
+		},
 		PingInterval:     cfg.Tunnel.Connection.KeepaliveInterval,
 		WriteTimeout:     cfg.Tunnel.Connection.DialTimeout,
-		ReadTimeout:      cfg.Tunnel.Connection.DialTimeout,
+		ReadTimeout:      readTimeout,
 		DialTimeout:      cfg.Tunnel.Connection.DialTimeout,
 		HandshakeTimeout: cfg.Tunnel.Connection.DialTimeout,
 	}
@@ -122,6 +138,22 @@ func main() {
 	if err := c.Start(ctx); err != nil {
 		log.Error().Err(err).Msg("Failed to start client")
 		os.Exit(1)
+	}
+
+	// Start metrics server if enabled
+	var metricsServer *metrics.Server
+	if cfg.Observability.Metrics.Enabled {
+		addr := fmt.Sprintf(":%d", cfg.Observability.Metrics.Port)
+		metricsServer = metrics.NewServer(&metrics.ServerConfig{
+			Addr: addr,
+			Path: cfg.Observability.Metrics.Path,
+		})
+		go func() {
+			if err := metricsServer.Start(); err != nil && err != http.ErrServerClosed {
+				log.Error().Err(err).Msg("Metrics server error")
+			}
+		}()
+		log.Info().Str("addr", addr).Str("path", cfg.Observability.Metrics.Path).Msg("Metrics server started")
 	}
 
 	// Log startup info
@@ -141,6 +173,14 @@ func main() {
 	// Wait for shutdown
 	<-ctx.Done()
 	log.Info().Msg("Shutting down client")
+
+	if metricsServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("Metrics server shutdown error")
+		}
+		shutdownCancel()
+	}
 
 	// Stop the client
 	if err := c.Stop(); err != nil {
