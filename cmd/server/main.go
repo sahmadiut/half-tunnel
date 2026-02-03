@@ -33,27 +33,37 @@ func main() {
 	}
 
 	// Load configuration
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.LoadServerConfig(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Initialize logger
 	log, err := logger.New(logger.Config{
-		Level:  cfg.Log.Level,
-		Format: cfg.Log.Format,
-		Output: cfg.Log.Output,
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		Output: cfg.Logging.Output,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Construct addresses from host:port
+	upstreamAddr := fmt.Sprintf("%s:%d", cfg.Server.Upstream.Host, cfg.Server.Upstream.Port)
+	downstreamAddr := fmt.Sprintf("%s:%d", cfg.Server.Downstream.Host, cfg.Server.Downstream.Port)
+
 	log.Info().
 		Str("version", version).
-		Str("upstream_addr", cfg.Server.UpstreamAddr).
-		Str("downstream_addr", cfg.Server.DownstreamAddr).
+		Str("upstream_addr", upstreamAddr).
+		Str("downstream_addr", downstreamAddr).
 		Msg("Starting Half-Tunnel server")
 
 	// Set up context for graceful shutdown
@@ -72,16 +82,16 @@ func main() {
 
 	// Create server configuration
 	serverConfig := &server.Config{
-		UpstreamAddr:    cfg.Server.UpstreamAddr,
-		UpstreamPath:    "/upstream",
-		DownstreamAddr:  cfg.Server.DownstreamAddr,
-		DownstreamPath:  "/downstream",
-		SessionTimeout:  cfg.Server.Session.IdleTimeout,
-		MaxSessions:     cfg.Server.Session.MaxSessions,
-		ReadBufferSize:  32768,
-		WriteBufferSize: 32768,
-		MaxMessageSize:  65536,
-		DialTimeout:     10 * time.Second,
+		UpstreamAddr:    upstreamAddr,
+		UpstreamPath:    cfg.Server.Upstream.Path,
+		DownstreamAddr:  downstreamAddr,
+		DownstreamPath:  cfg.Server.Downstream.Path,
+		SessionTimeout:  cfg.Tunnel.Session.Timeout,
+		MaxSessions:     cfg.Tunnel.Session.MaxSessions,
+		ReadBufferSize:  cfg.Tunnel.Connection.ReadBufferSize,
+		WriteBufferSize: cfg.Tunnel.Connection.WriteBufferSize,
+		MaxMessageSize:  cfg.Tunnel.Connection.MaxMessageSize,
+		DialTimeout:     cfg.Tunnel.Connection.KeepaliveInterval,
 	}
 
 	// Create and start the server
