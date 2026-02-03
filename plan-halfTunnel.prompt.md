@@ -157,34 +157,31 @@ client:
 
 # Port forwarding rules (all port definitions are on client side)
 # Client tells server which destination to connect to
+# Simplified format: only port number required, defaults applied automatically
 port_forwards:
-  - name: "web-proxy"
-    listen_host: "127.0.0.1"    # Local address to listen on
-    listen_port: 8080            # Local port to listen on
-    remote_host: "example.com"   # Destination host (server connects to this)
-    remote_port: 80              # Destination port
-    protocol: "tcp"
+  # Minimal format: just the port (listens on 127.0.0.1:2083, forwards to remote:2083)
+  - 2083
+  - 8080
+  - 3306
+  
+  # Or with some customization
+  - port: 443                    # listen_port = remote_port = 443
+  
+  - port: 22
+    listen_host: "0.0.0.0"       # Listen on all interfaces
     
-  - name: "https-proxy"
-    listen_host: "127.0.0.1"
-    listen_port: 8443
-    remote_host: "secure.example.com"
-    remote_port: 443
-    protocol: "tcp"
+  # Full format with all options
+  - name: "web-proxy"
+    listen_host: "127.0.0.1"     # Default: 127.0.0.1
+    listen_port: 8080            # Local port to listen on
+    remote_host: "example.com"   # Default: destination from SOCKS/connect request
+    remote_port: 80              # Default: same as listen_port
+    protocol: "tcp"              # Default: tcp
     
   - name: "ssh-tunnel"
-    listen_host: "127.0.0.1"
     listen_port: 2222
     remote_host: "ssh.internal.company.com"
     remote_port: 22
-    protocol: "tcp"
-    
-  - name: "database"
-    listen_host: "127.0.0.1"
-    listen_port: 5432
-    remote_host: "db.internal.company.com"
-    remote_port: 5432
-    protocol: "tcp"
 
 # SOCKS5 Proxy (for dynamic port forwarding - any destination)
 socks5:
@@ -257,11 +254,16 @@ half-tunnel config generate --type server --output server.yml
 half-tunnel config generate --type client --output client.yml
 
 # Generate client config with flags (non-interactive)
+# Port format options:
+#   - Simple: "2083" (listen on 2083, forward to remote:2083)
+#   - With remote: "8080:80" (listen on 8080, forward to remote:80)
+#   - Full: "8080:example.com:80" (listen on 8080, forward to example.com:80)
 half-tunnel config generate --type client \
   --upstream-url "wss://domain-a.example.com:8443/ws/upstream" \
   --downstream-url "wss://domain-b.example.com:8444/ws/downstream" \
+  --port-forward "2083" \
+  --port-forward "443" \
   --port-forward "8080:example.com:80" \
-  --port-forward "2222:ssh.server.com:22" \
   --socks5-port 1080 \
   --output client.yml
 
@@ -295,15 +297,13 @@ $ half-tunnel config generate --type client
 
 📡 Port Forwarding Rules
 ? Add a port forward? Yes
-? Local listen address [127.0.0.1]: 
-? Local port: 8080
-? Remote host: api.internal.com
-? Remote port: 80
+? Port to forward: 2083
+? Same port on remote? (Y/n): Y
 ? Add another port forward? Yes
-? Local listen address [127.0.0.1]: 
-? Local port: 3306
-? Remote host: db.internal.com
-? Remote port: 3306
+? Port to forward: 8080
+? Same port on remote? (Y/n): n
+? Remote host (leave empty for dynamic): api.internal.com
+? Remote port: 80
 ? Add another port forward? No
 
 🧦 SOCKS5 Proxy
@@ -329,7 +329,10 @@ func (g *ConfigGenerator) GenerateClientConfig(opts GenerateOptions) (*ClientCon
 // GenerateServerConfig creates a new server configuration  
 func (g *ConfigGenerator) GenerateServerConfig(opts GenerateOptions) (*ServerConfig, error)
 
-// ParsePortForward parses "localPort:remoteHost:remotePort" format
+// ParsePortForward parses flexible port forward formats:
+// - "2083" → listen:2083, remote:2083
+// - "8080:80" → listen:8080, remote:80
+// - "8080:example.com:80" → listen:8080, remote:example.com:80
 func ParsePortForward(spec string) (*PortForward, error)
 
 // ValidateConfig validates a config file
@@ -368,23 +371,52 @@ type AccessConfig struct {
 
 // ClientConfig represents client configuration
 type ClientConfig struct {
-    Client        ClientSettings   `yaml:"client"`
-    PortForwards  []PortForward    `yaml:"port_forwards"`
-    SOCKS5        SOCKS5Config     `yaml:"socks5"`
-    Tunnel        TunnelConfig     `yaml:"tunnel"`
-    DNS           DNSConfig        `yaml:"dns"`
-    Logging       LogConfig        `yaml:"logging"`
-    Observability ObservConfig     `yaml:"observability"`
+    Client        ClientSettings      `yaml:"client"`
+    PortForwards  []PortForwardEntry  `yaml:"port_forwards"`  // Supports int, string, or object
+    SOCKS5        SOCKS5Config        `yaml:"socks5"`
+    Tunnel        TunnelConfig        `yaml:"tunnel"`
+    DNS           DNSConfig           `yaml:"dns"`
+    Logging       LogConfig           `yaml:"logging"`
+    Observability ObservConfig        `yaml:"observability"`
 }
 
-// PortForward defines client-side port forwarding (client decides destination)
+// PortForwardEntry can be parsed from multiple formats:
+// - Simple: 2083 (int) → listen on 127.0.0.1:2083, forward to remote:2083
+// - Object with minimal fields: {port: 443}
+// - Full object: {name: "...", listen_host: "...", listen_port: ..., remote_host: "...", remote_port: ...}
+type PortForwardEntry interface{}  // Parsed into PortForward
+
+// PortForward defines client-side port forwarding with smart defaults
 type PortForward struct {
-    Name       string `yaml:"name"`
-    ListenHost string `yaml:"listen_host"`
-    ListenPort int    `yaml:"listen_port"`
-    RemoteHost string `yaml:"remote_host"`   // Destination host (server connects to)
-    RemotePort int    `yaml:"remote_port"`   // Destination port
-    Protocol   string `yaml:"protocol"`
+    Name       string `yaml:"name,omitempty"`        // Optional: auto-generated if empty
+    ListenHost string `yaml:"listen_host,omitempty"` // Default: "127.0.0.1"
+    ListenPort int    `yaml:"listen_port"`           // Required (or use 'port')
+    Port       int    `yaml:"port,omitempty"`        // Shorthand: sets both listen_port and remote_port
+    RemoteHost string `yaml:"remote_host,omitempty"` // Default: "" (use destination from connection)
+    RemotePort int    `yaml:"remote_port,omitempty"` // Default: same as listen_port
+    Protocol   string `yaml:"protocol,omitempty"`    // Default: "tcp"
+}
+
+// ParsePortForwards handles flexible YAML input formats
+func ParsePortForwards(raw []interface{}) ([]PortForward, error) {
+    var result []PortForward
+    for _, entry := range raw {
+        switch v := entry.(type) {
+        case int:
+            // Simple format: just port number
+            result = append(result, PortForward{
+                ListenHost: "127.0.0.1",
+                ListenPort: v,
+                RemotePort: v,
+                Protocol:   "tcp",
+            })
+        case map[string]interface{}:
+            // Object format: parse fields with defaults
+            pf := parsePortForwardMap(v)
+            result = append(result, pf)
+        }
+    }
+    return result, nil
 }
 ```
 
@@ -531,10 +563,112 @@ type PortForward struct {
    - Unit tests with coverage
    - Build binaries
    - Security scan (`govulncheck`, `trivy`)
-2. `release.yml`: On tag push
-   - Build multi-arch binaries (linux/amd64, linux/arm64, darwin/amd64, windows/amd64)
+
+2. `release.yml`: On tag push (Linux only, fast builds)
+   - Build binaries for Linux only (linux/amd64, linux/arm64)
    - Build & push Docker images to GHCR
    - Generate changelog, create GitHub Release
+
+**Release Strategy (Build Types):**
+
+| Build Type | Trigger | Version Format | Notes |
+|------------|---------|----------------|-------|
+| **Stable** | Tag `v*.*.*` (e.g., `v1.0.0`) | `v1.0.0` | Production-ready release |
+| **Beta** | Tag `v*.*.*-beta.*` (e.g., `v1.0.0-beta.1`) | `v1.0.0-beta.1` | Pre-release for testing |
+| **Nightly** | Daily cron or manual | `nightly-YYYYMMDD` | Latest development build |
+
+**Workflow Files:**
+```yaml
+# .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'           # Stable: v1.0.0, v2.1.3
+      - 'v*.*.*-beta.*'    # Beta: v1.0.0-beta.1, v2.0.0-beta.3
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" \
+          -o half-tunnel-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/...
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: half-tunnel-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: binaries-*/*
+          prerelease: ${{ contains(github.ref, 'beta') }}
+          generate_release_notes: true
+```
+
+```yaml
+# .github/workflows/nightly.yml
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build Linux binaries
+        run: |
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch go build -ldflags="-s -w" \
+            -o half-tunnel-linux-$arch ./cmd/...
+          done
+      - name: Create Nightly Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: nightly-${{ github.run_id }}
+          name: Nightly Build
+          prerelease: true
+          files: half-tunnel-*
+```
+
+**CLI Flags for Version:**
+```go
+// cmd/client/main.go & cmd/server/main.go
+var version = "dev"  // Set by -ldflags at build time
+
+func main() {
+    if len(os.Args) > 1 && os.Args[1] == "--version" {
+        fmt.Println("half-tunnel", version)
+        return
+    }
+    // ...
+}
+```
 
 ### 5C: Testing Strategy
 
@@ -584,6 +718,7 @@ type PortForward struct {
 - **YAML for configuration**: Human-readable, widely supported, good for port mappings and nested structures
 - **Separate config files for client/server**: Clearer separation of concerns, easier to deploy and manage
 - **Port definitions only on client**: Client specifies destination (remote_host:remote_port); server acts as transparent proxy. Simpler architecture, no need to sync port configs between client and server
+- **Flexible port format**: Support simple format (`2083` = listen and forward same port) and full format (`8080:host:80`). Reduces config verbosity for common use cases
 - **Config generator CLI**: Users can generate configs interactively or via flags, reducing configuration errors
 - **SOCKS5 over TUN for Phase 1**: Simpler cross-platform, avoids OS-level permissions; TUN can be Phase 2 enhancement
 - **Binary protocol over JSON**: Lower overhead for high-throughput tunneling
