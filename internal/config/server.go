@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -11,18 +12,18 @@ import (
 
 // ServerConfig represents the complete server configuration.
 type ServerConfig struct {
-	Server        ServerSettings   `mapstructure:"server"`
-	Access        AccessConfig     `mapstructure:"access"`
+	Server        ServerSettings     `mapstructure:"server"`
+	Access        AccessConfig       `mapstructure:"access"`
 	Tunnel        ServerTunnelConfig `mapstructure:"tunnel"`
-	Logging       LoggingConfig    `mapstructure:"logging"`
-	Observability ObservConfig     `mapstructure:"observability"`
+	Logging       LoggingConfig      `mapstructure:"logging"`
+	Observability ObservConfig       `mapstructure:"observability"`
 }
 
 // ServerSettings holds server-specific settings.
 type ServerSettings struct {
-	Name       string            `mapstructure:"name"`
-	Upstream   ServerEndpoint    `mapstructure:"upstream"`
-	Downstream ServerEndpoint    `mapstructure:"downstream"`
+	Name       string         `mapstructure:"name"`
+	Upstream   ServerEndpoint `mapstructure:"upstream"`
+	Downstream ServerEndpoint `mapstructure:"downstream"`
 }
 
 // ServerEndpoint defines a server listener endpoint.
@@ -189,6 +190,7 @@ func LoadServerConfig(configPath string) (*ServerConfig, error) {
 
 	// Read environment variables
 	v.SetEnvPrefix("HT_SERVER")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 
 	// Read config file

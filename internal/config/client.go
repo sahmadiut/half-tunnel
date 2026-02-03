@@ -13,20 +13,20 @@ import (
 
 // ClientConfig represents the complete client configuration.
 type ClientConfig struct {
-	Client        ClientSettings      `mapstructure:"client"`
-	PortForwards  []interface{}       `mapstructure:"port_forwards"`
-	SOCKS5        SOCKS5Config        `mapstructure:"socks5"`
-	Tunnel        ClientTunnelConfig  `mapstructure:"tunnel"`
-	DNS           DNSConfig           `mapstructure:"dns"`
-	Logging       LoggingConfig       `mapstructure:"logging"`
-	Observability ClientObservConfig  `mapstructure:"observability"`
+	Client        ClientSettings     `mapstructure:"client"`
+	PortForwards  []interface{}      `mapstructure:"port_forwards"`
+	SOCKS5        SOCKS5Config       `mapstructure:"socks5"`
+	Tunnel        ClientTunnelConfig `mapstructure:"tunnel"`
+	DNS           DNSConfig          `mapstructure:"dns"`
+	Logging       LoggingConfig      `mapstructure:"logging"`
+	Observability ClientObservConfig `mapstructure:"observability"`
 }
 
 // ClientSettings holds client-specific settings.
 type ClientSettings struct {
-	Name       string          `mapstructure:"name"`
-	Upstream   ClientEndpoint  `mapstructure:"upstream"`
-	Downstream ClientEndpoint  `mapstructure:"downstream"`
+	Name       string         `mapstructure:"name"`
+	Upstream   ClientEndpoint `mapstructure:"upstream"`
+	Downstream ClientEndpoint `mapstructure:"downstream"`
 }
 
 // ClientEndpoint defines a client connection endpoint.
@@ -55,10 +55,10 @@ type PortForward struct {
 
 // SOCKS5Config holds SOCKS5 proxy configuration.
 type SOCKS5Config struct {
-	Enabled    bool        `mapstructure:"enabled"`
-	ListenHost string      `mapstructure:"listen_host"`
-	ListenPort int         `mapstructure:"listen_port"`
-	Auth       SOCKS5Auth  `mapstructure:"auth"`
+	Enabled    bool       `mapstructure:"enabled"`
+	ListenHost string     `mapstructure:"listen_host"`
+	ListenPort int        `mapstructure:"listen_port"`
+	Auth       SOCKS5Auth `mapstructure:"auth"`
 }
 
 // SOCKS5Auth holds SOCKS5 authentication settings.
@@ -199,6 +199,7 @@ func LoadClientConfig(configPath string) (*ClientConfig, error) {
 
 	// Read environment variables
 	v.SetEnvPrefix("HT_CLIENT")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	v.AutomaticEnv()
 
 	// Read config file
