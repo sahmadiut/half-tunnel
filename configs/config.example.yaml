@@ -1,0 +1,66 @@
+# Half-Tunnel Configuration File
+# This is a sample configuration file for the Half-Tunnel split-path VPN system.
+
+# Client configuration
+client:
+  # Local address for SOCKS5 proxy
+  listen_addr: "127.0.0.1:1080"
+  
+  # Upstream WebSocket URL (Domain A) - write-only path
+  upstream_url: "wss://domain-a.example.com/upstream"
+  
+  # Downstream WebSocket URL (Domain B) - read-only path
+  downstream_url: "wss://domain-b.example.com/downstream"
+  
+  # TLS settings
+  tls:
+    enabled: true
+    # Skip certificate verification (insecure, for testing only)
+    insecure_skip_verify: false
+    # Custom CA certificate (optional)
+    # ca_file: "/path/to/ca.pem"
+  
+  # Connection settings
+  connection:
+    ping_interval: 30s
+    pong_timeout: 10s
+    write_timeout: 10s
+    read_timeout: 60s
+    
+    # Reconnection settings
+    reconnect:
+      enabled: true
+      initial_delay: 1s
+      max_delay: 60s
+      max_attempts: 0  # 0 = unlimited
+
+# Server configuration
+server:
+  # Upstream listener address (Domain A)
+  upstream_addr: ":8080"
+  
+  # Downstream listener address (Domain B)
+  downstream_addr: ":8081"
+  
+  # TLS settings
+  tls:
+    enabled: false
+    # cert_file: "/path/to/cert.pem"
+    # key_file: "/path/to/key.pem"
+  
+  # Session management
+  session:
+    idle_timeout: 5m
+    max_sessions: 10000
+    max_streams_per_session: 1000
+
+# Logging configuration
+log:
+  # Log level: debug, info, warn, error
+  level: "info"
+  
+  # Output format: json, console
+  format: "console"
+  
+  # Output file (empty for stdout)
+  output: ""

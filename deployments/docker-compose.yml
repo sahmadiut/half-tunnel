@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  # Half-Tunnel Server - Upstream (Domain A)
+  server-upstream:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.server
+    ports:
+      - "8080:8080"
+    environment:
+      - HT_SERVER_UPSTREAM_ADDR=:8080
+      - HT_SERVER_DOWNSTREAM_ADDR=:8081
+      - HT_LOG_LEVEL=debug
+    networks:
+      - half-tunnel
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Half-Tunnel Server - Downstream (Domain B)
+  # In production, this would be on a separate server/domain
+  server-downstream:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.server
+    ports:
+      - "8081:8081"
+    environment:
+      - HT_SERVER_UPSTREAM_ADDR=:8080
+      - HT_SERVER_DOWNSTREAM_ADDR=:8081
+      - HT_LOG_LEVEL=debug
+    networks:
+      - half-tunnel
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Half-Tunnel Client
+  client:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.client
+    ports:
+      - "1080:1080"
+    environment:
+      - HT_CLIENT_LISTEN_ADDR=0.0.0.0:1080
+      - HT_CLIENT_UPSTREAM_URL=ws://server-upstream:8080/upstream
+      - HT_CLIENT_DOWNSTREAM_URL=ws://server-downstream:8081/downstream
+      - HT_LOG_LEVEL=debug
+    depends_on:
+      - server-upstream
+      - server-downstream
+    networks:
+      - half-tunnel
+
+networks:
+  half-tunnel:
+    driver: bridge
