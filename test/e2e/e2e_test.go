@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -225,7 +226,7 @@ func TestEndToEndMultipleStreams(t *testing.T) {
 			}
 			defer conn.Close()
 
-			testData := []byte("Hello from connection " + string(rune('A'+id)))
+			testData := []byte(fmt.Sprintf("Hello from connection %d", id))
 			if _, err := conn.Write(testData); err != nil {
 				results <- err
 				return
@@ -238,7 +239,7 @@ func TestEndToEndMultipleStreams(t *testing.T) {
 			}
 
 			if string(buf) != string(testData) {
-				results <- err
+				results <- fmt.Errorf("data mismatch: expected %q, got %q", testData, buf)
 				return
 			}
 
