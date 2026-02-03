@@ -1,4 +1,4 @@
-.PHONY: all build build-client build-server test lint clean docker help
+.PHONY: all build build-client build-server build-cli test lint clean docker help validate-config
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -18,7 +18,7 @@ BIN_DIR := bin
 all: lint test build
 
 # Build both client and server
-build: build-client build-server
+build: build-client build-server build-cli
 
 # Build client
 build-client:
@@ -31,6 +31,12 @@ build-server:
 	@echo "Building server..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(LDFLAGS) -o $(BIN_DIR)/ht-server ./cmd/server
+
+# Build CLI tool
+build-cli:
+	@echo "Building CLI..."
+	@mkdir -p $(BIN_DIR)
+	$(GO) build $(LDFLAGS) -o $(BIN_DIR)/half-tunnel ./cmd/half-tunnel
 
 # Run tests
 test:
@@ -91,15 +97,23 @@ security:
 generate:
 	$(GO) generate ./...
 
+# Validate configuration files
+validate-config: build-cli
+	@echo "Validating configuration files..."
+	@./$(BIN_DIR)/half-tunnel config validate --config configs/server.yml --type server
+	@./$(BIN_DIR)/half-tunnel config validate --config configs/client.yml --type client
+	@echo "All configurations are valid."
+
 # Help
 help:
 	@echo "Half-Tunnel Makefile"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all           - Run lint, test, and build"
-	@echo "  build         - Build both client and server"
+	@echo "  build         - Build client, server, and CLI"
 	@echo "  build-client  - Build client binary"
 	@echo "  build-server  - Build server binary"
+	@echo "  build-cli     - Build half-tunnel CLI binary"
 	@echo "  test          - Run tests with race detection"
 	@echo "  test-coverage - Run tests and generate coverage report"
 	@echo "  lint          - Run golangci-lint"
@@ -111,4 +125,5 @@ help:
 	@echo "  run-client    - Run client locally"
 	@echo "  run-server    - Run server locally"
 	@echo "  security      - Run security vulnerability scan"
+	@echo "  validate-config - Validate sample configuration files"
 	@echo "  help          - Show this help"

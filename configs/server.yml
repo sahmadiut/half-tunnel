@@ -1,0 +1,74 @@
+# Half-Tunnel Server Configuration
+server:
+  # Server identification
+  name: "exit-server-01"
+  
+  # Upstream listener (Domain A) - receives client requests
+  upstream:
+    host: "0.0.0.0"
+    port: 8443
+    path: "/ws/upstream"
+    tls:
+      enabled: true
+      cert_file: "/etc/half-tunnel/certs/server.crt"
+      key_file: "/etc/half-tunnel/certs/server.key"
+  
+  # Downstream listener (Domain B) - sends responses to client
+  downstream:
+    host: "0.0.0.0"
+    port: 8444
+    path: "/ws/downstream"
+    tls:
+      enabled: true
+      cert_file: "/etc/half-tunnel/certs/server.crt"
+      key_file: "/etc/half-tunnel/certs/server.key"
+
+# Access control (server doesn't define ports - client requests any destination)
+access:
+  # Allowed destination networks (empty = allow all)
+  allowed_networks:
+    - "0.0.0.0/0"           # Allow all IPv4
+    - "::/0"                # Allow all IPv6
+  # Blocked destinations (takes priority over allowed)
+  blocked_networks:
+    - "10.0.0.0/8"          # Block private networks (optional)
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  # Max connections per session
+  max_streams_per_session: 100
+
+# Tunnel settings
+tunnel:
+  # Session management
+  session:
+    timeout: "5m"           # Idle session timeout
+    max_sessions: 1000      # Maximum concurrent sessions
+    
+  # Connection settings
+  connection:
+    read_buffer_size: 32768
+    write_buffer_size: 32768
+    keepalive_interval: "30s"
+    max_message_size: 65536
+    
+  # Encryption
+  encryption:
+    enabled: true
+    algorithm: "aes-256-gcm"  # Options: aes-256-gcm, chacha20-poly1305
+
+# Logging
+logging:
+  level: "info"             # debug, info, warn, error
+  format: "json"            # json, text
+  output: "/var/log/half-tunnel/server.log"
+
+# Metrics & Health
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  health:
+    enabled: true
+    port: 8080
+    path: "/healthz"

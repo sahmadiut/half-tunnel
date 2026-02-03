@@ -10,14 +10,15 @@ import (
 )
 
 // Config holds all configuration for the Half-Tunnel system.
+// This is the legacy combined configuration used by the existing client and server.
 type Config struct {
-	Client ClientConfig `mapstructure:"client"`
-	Server ServerConfig `mapstructure:"server"`
-	Log    LogConfig    `mapstructure:"log"`
+	Client LegacyClientConfig `mapstructure:"client"`
+	Server LegacyServerConfig `mapstructure:"server"`
+	Log    LogConfig          `mapstructure:"log"`
 }
 
-// ClientConfig holds client-specific configuration.
-type ClientConfig struct {
+// LegacyClientConfig holds client-specific configuration (legacy format).
+type LegacyClientConfig struct {
 	// Listen address for local proxy (e.g., "127.0.0.1:1080" for SOCKS5)
 	ListenAddr string `mapstructure:"listen_addr"`
 	// Upstream WebSocket URL (Domain A)
@@ -30,8 +31,8 @@ type ClientConfig struct {
 	Connection ConnectionConfig `mapstructure:"connection"`
 }
 
-// ServerConfig holds server-specific configuration.
-type ServerConfig struct {
+// LegacyServerConfig holds server-specific configuration (legacy format).
+type LegacyServerConfig struct {
 	// Upstream listener address (Domain A)
 	UpstreamAddr string `mapstructure:"upstream_addr"`
 	// Downstream listener address (Domain B)
@@ -67,11 +68,11 @@ type ConnectionConfig struct {
 	// Read timeout
 	ReadTimeout time.Duration `mapstructure:"read_timeout"`
 	// Reconnect settings
-	Reconnect ReconnectConfig `mapstructure:"reconnect"`
+	Reconnect LegacyReconnectConfig `mapstructure:"reconnect"`
 }
 
-// ReconnectConfig holds reconnection settings.
-type ReconnectConfig struct {
+// LegacyReconnectConfig holds reconnection settings (legacy format).
+type LegacyReconnectConfig struct {
 	// Enable automatic reconnection
 	Enabled bool `mapstructure:"enabled"`
 	// Initial delay before first reconnect attempt
@@ -105,7 +106,7 @@ type LogConfig struct {
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Client: ClientConfig{
+		Client: LegacyClientConfig{
 			ListenAddr:    "127.0.0.1:1080",
 			UpstreamURL:   "ws://localhost:8080/upstream",
 			DownstreamURL: "ws://localhost:8081/downstream",
@@ -117,7 +118,7 @@ func DefaultConfig() *Config {
 				PongTimeout:  10 * time.Second,
 				WriteTimeout: 10 * time.Second,
 				ReadTimeout:  60 * time.Second,
-				Reconnect: ReconnectConfig{
+				Reconnect: LegacyReconnectConfig{
 					Enabled:      true,
 					InitialDelay: 1 * time.Second,
 					MaxDelay:     60 * time.Second,
@@ -125,7 +126,7 @@ func DefaultConfig() *Config {
 				},
 			},
 		},
-		Server: ServerConfig{
+		Server: LegacyServerConfig{
 			UpstreamAddr:   ":8080",
 			DownstreamAddr: ":8081",
 			TLS: TLSConfig{
