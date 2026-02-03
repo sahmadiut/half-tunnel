@@ -32,17 +32,23 @@ func main() {
 	}
 
 	// Load configuration
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.LoadClientConfig(*configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Initialize logger
 	log, err := logger.New(logger.Config{
-		Level:  cfg.Log.Level,
-		Format: cfg.Log.Format,
-		Output: cfg.Log.Output,
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		Output: cfg.Logging.Output,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
@@ -51,8 +57,8 @@ func main() {
 
 	log.Info().
 		Str("version", version).
-		Str("upstream", cfg.Client.UpstreamURL).
-		Str("downstream", cfg.Client.DownstreamURL).
+		Str("upstream", cfg.Client.Upstream.URL).
+		Str("downstream", cfg.Client.Downstream.URL).
 		Msg("Starting Half-Tunnel client")
 
 	// Set up context for graceful shutdown
@@ -69,16 +75,25 @@ func main() {
 		cancel()
 	}()
 
+	// Build SOCKS5 address from configuration
+	socks5Addr := fmt.Sprintf("%s:%d", cfg.SOCKS5.ListenHost, cfg.SOCKS5.ListenPort)
+
 	// Create client configuration
 	clientConfig := &client.Config{
-		UpstreamURL:      cfg.Client.UpstreamURL,
-		DownstreamURL:    cfg.Client.DownstreamURL,
-		SOCKS5Addr:       cfg.Client.ListenAddr,
-		PingInterval:     cfg.Client.Connection.PingInterval,
-		WriteTimeout:     cfg.Client.Connection.WriteTimeout,
-		ReadTimeout:      cfg.Client.Connection.ReadTimeout,
-		DialTimeout:      10 * cfg.Client.Connection.WriteTimeout, // Default dial timeout
-		HandshakeTimeout: cfg.Client.Connection.WriteTimeout,
+		UpstreamURL:      cfg.Client.Upstream.URL,
+		DownstreamURL:    cfg.Client.Downstream.URL,
+		SOCKS5Addr:       socks5Addr,
+		PingInterval:     cfg.Tunnel.Connection.KeepaliveInterval,
+		WriteTimeout:     cfg.Tunnel.Connection.DialTimeout,
+		ReadTimeout:      cfg.Tunnel.Connection.DialTimeout,
+		DialTimeout:      cfg.Tunnel.Connection.DialTimeout,
+		HandshakeTimeout: cfg.Tunnel.Connection.DialTimeout,
+	}
+
+	// Set SOCKS5 authentication if enabled
+	if cfg.SOCKS5.Auth.Enabled {
+		clientConfig.SOCKS5Username = cfg.SOCKS5.Auth.Username
+		clientConfig.SOCKS5Password = cfg.SOCKS5.Auth.Password
 	}
 
 	// Create and start the client
@@ -90,7 +105,7 @@ func main() {
 
 	log.Info().
 		Str("session_id", c.GetSessionID().String()).
-		Str("socks5_addr", cfg.Client.ListenAddr).
+		Str("socks5_addr", socks5Addr).
 		Msg("Client is ready")
 
 	// Wait for shutdown
