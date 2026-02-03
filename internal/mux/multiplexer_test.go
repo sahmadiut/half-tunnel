@@ -237,8 +237,8 @@ func TestMultiplexerClose(t *testing.T) {
 	sess := session.New()
 	mux := NewMultiplexer(sess)
 
-	mux.OpenStream()
-	mux.OpenStream()
+	_, _ = mux.OpenStream()
+	_, _ = mux.OpenStream()
 
 	err := mux.Close()
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/sahmadiut/half-tunnel/internal/client"
 	"github.com/sahmadiut/half-tunnel/internal/config"
 	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
@@ -68,15 +69,36 @@ func main() {
 		cancel()
 	}()
 
-	// TODO: Implement client logic
-	// 1. Create session
-	// 2. Connect to upstream (Domain A) and downstream (Domain B)
-	// 3. Start SOCKS5 proxy listener
-	// 4. Handle connections
+	// Create client configuration
+	clientConfig := &client.Config{
+		UpstreamURL:      cfg.Client.UpstreamURL,
+		DownstreamURL:    cfg.Client.DownstreamURL,
+		SOCKS5Addr:       cfg.Client.ListenAddr,
+		PingInterval:     cfg.Client.Connection.PingInterval,
+		WriteTimeout:     cfg.Client.Connection.WriteTimeout,
+		ReadTimeout:      cfg.Client.Connection.ReadTimeout,
+		DialTimeout:      10 * cfg.Client.Connection.WriteTimeout, // Default dial timeout
+		HandshakeTimeout: cfg.Client.Connection.WriteTimeout,
+	}
 
-	log.Info().Msg("Client is ready (placeholder)")
+	// Create and start the client
+	c := client.New(clientConfig, log)
+	if err := c.Start(ctx); err != nil {
+		log.Error().Err(err).Msg("Failed to start client")
+		os.Exit(1)
+	}
+
+	log.Info().
+		Str("session_id", c.GetSessionID().String()).
+		Str("socks5_addr", cfg.Client.ListenAddr).
+		Msg("Client is ready")
 
 	// Wait for shutdown
 	<-ctx.Done()
 	log.Info().Msg("Shutting down client")
+
+	// Stop the client
+	if err := c.Stop(); err != nil {
+		log.Error().Err(err).Msg("Error stopping client")
+	}
 }
