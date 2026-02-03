@@ -1,0 +1,102 @@
+# Half-Tunnel Client Configuration
+client:
+  # Client identification
+  name: "entry-client-01"
+  
+  # Upstream connection (Domain A) - sends requests to server
+  upstream:
+    url: "wss://domain-a.example.com:8443/ws/upstream"
+    tls:
+      enabled: true
+      skip_verify: false
+      ca_file: "/etc/half-tunnel/certs/ca.crt"
+      
+  # Downstream connection (Domain B) - receives responses from server
+  downstream:
+    url: "wss://domain-b.example.com:8444/ws/downstream"
+    tls:
+      enabled: true
+      skip_verify: false
+      ca_file: "/etc/half-tunnel/certs/ca.crt"
+
+# Port forwarding rules (all port definitions are on client side)
+# Client tells server which destination to connect to
+# Simplified format: only port number required, defaults applied automatically
+port_forwards:
+  # Minimal format: just the port (listens on 127.0.0.1:2083, forwards to remote:2083)
+  - 2083
+  - 8080
+  - 3306
+  
+  # Or with some customization
+  - port: 443                    # listen_port = remote_port = 443
+  
+  - port: 22
+    listen_host: "0.0.0.0"       # Listen on all interfaces
+    
+  # Full format with all options
+  - name: "web-proxy"
+    listen_host: "127.0.0.1"     # Default: 127.0.0.1
+    listen_port: 8080            # Local port to listen on
+    remote_host: "example.com"   # Default: destination from SOCKS/connect request
+    remote_port: 80              # Default: same as listen_port
+    protocol: "tcp"              # Default: tcp
+    
+  - name: "ssh-tunnel"
+    listen_port: 2222
+    remote_host: "ssh.internal.company.com"
+    remote_port: 22
+
+# SOCKS5 Proxy (for dynamic port forwarding - any destination)
+socks5:
+  enabled: true
+  listen_host: "127.0.0.1"
+  listen_port: 1080
+  auth:
+    enabled: false
+    username: ""
+    password: ""
+
+# Tunnel settings
+tunnel:
+  # Reconnection strategy
+  reconnect:
+    enabled: true
+    initial_delay: "1s"
+    max_delay: "60s"
+    multiplier: 2.0
+    jitter: 0.1
+    
+  # Connection settings
+  connection:
+    read_buffer_size: 32768
+    write_buffer_size: 32768
+    keepalive_interval: "30s"
+    dial_timeout: "10s"
+    
+  # Encryption (must match server)
+  encryption:
+    enabled: true
+    algorithm: "aes-256-gcm"
+
+# DNS settings (for full VPN mode)
+dns:
+  enabled: false
+  listen_host: "127.0.0.1"
+  listen_port: 5353
+  upstream_servers:
+    - "8.8.8.8:53"
+    - "1.1.1.1:53"
+
+# Logging
+logging:
+  level: "info"
+  format: "json"
+  output: "/var/log/half-tunnel/client.log"
+
+# Local metrics
+observability:
+  metrics:
+    enabled: true
+    port: 9091
+    path: "/metrics"
