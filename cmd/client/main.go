@@ -72,11 +72,15 @@ func main() {
 	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	go func() {
-		sig := <-sigCh
-		log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
-		cancel()
+		select {
+		case sig := <-sigCh:
+			log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
 
 	// Build SOCKS5 address from configuration

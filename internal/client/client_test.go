@@ -1,10 +1,13 @@
 package client
 
 import (
+	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/sahmadiut/half-tunnel/internal/socks5"
+	"github.com/sahmadiut/half-tunnel/internal/transport"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -121,4 +124,33 @@ func TestClientNotRunning(t *testing.T) {
 	if err != nil {
 		t.Errorf("Stop() on non-running client should not error: %v", err)
 	}
+}
+
+func TestStartTriggersReconnectOnFailure(t *testing.T) {
+	originalDial := dialTransport
+	defer func() { dialTransport = originalDial }()
+
+	dialTransport = func(ctx context.Context, config *transport.Config) (*transport.Connection, error) {
+		return nil, context.DeadlineExceeded
+	}
+
+	config := DefaultConfig()
+	config.SOCKS5Enabled = false
+	config.PingInterval = 0
+	config.ReconnectEnabled = true
+	config.DialTimeout = time.Millisecond
+
+	client := New(config, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	if client.IsConnected() {
+		t.Fatal("Expected client to be disconnected after dial failure")
+	}
+
+	_ = client.Stop()
 }
