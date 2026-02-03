@@ -27,6 +27,14 @@ Half-Tunnel uses UUID-based session correlation and multiplexing to reassemble b
 
 ### Installation
 
+#### Quick Install (Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sahmadiut/half-tunnel/main/scripts/install.sh | bash
+```
+
+#### Manual Installation
+
 ```bash
 # Clone the repository
 git clone https://github.com/sahmadiut/half-tunnel.git
@@ -89,7 +97,8 @@ See [configs/config.example.yaml](configs/config.example.yaml) for all available
 half-tunnel/
 ├── cmd/
 │   ├── client/          # Entry client binary
-│   └── server/          # Exit server binary
+│   ├── server/          # Exit server binary
+│   └── half-tunnel/     # CLI tool
 ├── internal/
 │   ├── protocol/        # Packet format, serialization
 │   ├── transport/       # WebSocket managers
@@ -101,8 +110,17 @@ half-tunnel/
 │   └── logger/          # Structured logging wrapper
 ├── configs/             # Sample configurations
 ├── deployments/         # Docker files
+├── scripts/             # Build and install scripts
+├── test/                # Integration and E2E tests
 └── docs/                # Documentation
 ```
+
+## Documentation
+
+- [Protocol Specification](docs/PROTOCOL.md) - Wire format and protocol details
+- [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment instructions
+- [Contributing](CONTRIBUTING.md) - Contribution guidelines
+- [Security Policy](SECURITY.md) - Security information and reporting
 
 ## Protocol
 
