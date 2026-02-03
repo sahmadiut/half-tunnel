@@ -6,12 +6,14 @@ A production-grade Go tunneling system that obscures traffic analysis by splitti
 
 Half-Tunnel uses UUID-based session correlation and multiplexing to reassemble bidirectional traffic on the exit server. This architecture provides enhanced privacy by separating request and response paths across different domains.
 
+
 ```
-┌─────────────┐     Upstream (Domain A)      ┌─────────────┐     Outbound
-│             │ ─────────────────────────────▶│             │ ─────────────▶
-│   Client    │                               │   Server    │              Internet
-│  (Entry)    │ ◀─────────────────────────────│   (Exit)    │ ◀─────────────
-└─────────────┘     Downstream (Domain B)     └─────────────┘     Inbound
+┌──────┐   ┌─────────────┐     Upstream (Domain A)       ┌─────────────┐     Outbound
+│ User │──▶│   Client    │ ─────────────────────────────▶│   Server    │ ─────────────▶ Internet
+└──────┘   │  (Entry)    │                               │   (Exit)    │
+		   └─────────────┘ ◀─────────────────────────────└─────────────┘
+			 ▲               Downstream (Domain B)           ▲
+			 └───────────────────────────────────────────────┘
 ```
 
 ## Features
