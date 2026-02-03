@@ -353,16 +353,23 @@ func ValidateConfig(path string, configType string) error
 // ServerConfig represents server configuration
 type ServerConfig struct {
     Server        ServerSettings   `yaml:"server"`
-    PortMappings  []PortMapping    `yaml:"port_mappings"`
+    Access        AccessConfig     `yaml:"access"`
     Tunnel        TunnelConfig     `yaml:"tunnel"`
     Logging       LogConfig        `yaml:"logging"`
     Observability ObservConfig     `yaml:"observability"`
 }
 
+// AccessConfig defines server-side access control (no port definitions)
+type AccessConfig struct {
+    AllowedNetworks      []string `yaml:"allowed_networks"`
+    BlockedNetworks      []string `yaml:"blocked_networks"`
+    MaxStreamsPerSession int      `yaml:"max_streams_per_session"`
+}
+
 // ClientConfig represents client configuration
 type ClientConfig struct {
     Client        ClientSettings   `yaml:"client"`
-    LocalPorts    []LocalPort      `yaml:"local_ports"`
+    PortForwards  []PortForward    `yaml:"port_forwards"`
     SOCKS5        SOCKS5Config     `yaml:"socks5"`
     Tunnel        TunnelConfig     `yaml:"tunnel"`
     DNS           DNSConfig        `yaml:"dns"`
@@ -370,21 +377,13 @@ type ClientConfig struct {
     Observability ObservConfig     `yaml:"observability"`
 }
 
-// PortMapping defines server-side port forwarding
-type PortMapping struct {
-    Name       string `yaml:"name"`
-    ListenPort int    `yaml:"listen_port"`
-    TargetHost string `yaml:"target_host"`
-    TargetPort int    `yaml:"target_port"`
-    Protocol   string `yaml:"protocol"`
-}
-
-// LocalPort defines client-side local listeners
-type LocalPort struct {
+// PortForward defines client-side port forwarding (client decides destination)
+type PortForward struct {
     Name       string `yaml:"name"`
     ListenHost string `yaml:"listen_host"`
     ListenPort int    `yaml:"listen_port"`
-    RemotePort int    `yaml:"remote_port"`
+    RemoteHost string `yaml:"remote_host"`   // Destination host (server connects to)
+    RemotePort int    `yaml:"remote_port"`   // Destination port
     Protocol   string `yaml:"protocol"`
 }
 ```
@@ -584,7 +583,8 @@ type LocalPort struct {
 
 - **YAML for configuration**: Human-readable, widely supported, good for port mappings and nested structures
 - **Separate config files for client/server**: Clearer separation of concerns, easier to deploy and manage
-- **Port mapping approach**: Explicit port-to-port mappings allow fine-grained control; SOCKS5 for dynamic forwarding
+- **Port definitions only on client**: Client specifies destination (remote_host:remote_port); server acts as transparent proxy. Simpler architecture, no need to sync port configs between client and server
+- **Config generator CLI**: Users can generate configs interactively or via flags, reducing configuration errors
 - **SOCKS5 over TUN for Phase 1**: Simpler cross-platform, avoids OS-level permissions; TUN can be Phase 2 enhancement
 - **Binary protocol over JSON**: Lower overhead for high-throughput tunneling
 - **UUID v4 for SessionID**: Cryptographically random, no coordination needed
