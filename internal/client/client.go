@@ -20,6 +20,15 @@ import (
 	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
 
+// PortForward defines a port forwarding rule.
+type PortForward struct {
+	Name       string
+	ListenHost string
+	ListenPort int
+	RemoteHost string
+	RemotePort int
+}
+
 // Config holds client configuration.
 type Config struct {
 	// UpstreamURL is the WebSocket URL for the upstream connection (Domain A)
@@ -28,9 +37,13 @@ type Config struct {
 	DownstreamURL string
 	// SOCKS5Addr is the local address to listen for SOCKS5 connections
 	SOCKS5Addr string
+	// SOCKS5Enabled controls whether SOCKS5 proxy is started
+	SOCKS5Enabled bool
 	// SOCKS5Username and SOCKS5Password for optional authentication
 	SOCKS5Username string
 	SOCKS5Password string
+	// PortForwards is the list of port forwarding rules
+	PortForwards []PortForward
 	// Connection settings
 	PingInterval     time.Duration
 	WriteTimeout     time.Duration
@@ -45,6 +58,8 @@ func DefaultConfig() *Config {
 		UpstreamURL:      "ws://localhost:8080/upstream",
 		DownstreamURL:    "ws://localhost:8081/downstream",
 		SOCKS5Addr:       "127.0.0.1:1080",
+		SOCKS5Enabled:    true,
+		PortForwards:     []PortForward{},
 		PingInterval:     30 * time.Second,
 		WriteTimeout:     10 * time.Second,
 		ReadTimeout:      60 * time.Second,
@@ -62,6 +77,9 @@ type Client struct {
 	upstream *transport.Connection
 	downstream *transport.Connection
 	socks5   *socks5.Server
+	
+	// Port forward listeners
+	portForwardListeners []net.Listener
 	
 	// Stream management
 	streamConns  map[uint32]*streamConn
@@ -155,25 +173,38 @@ func (c *Client) Start(ctx context.Context) error {
 	c.wg.Add(1)
 	go c.readDownstream(ctx)
 
-	// Start SOCKS5 server
-	socks5Config := &socks5.Config{
-		ListenAddr: c.config.SOCKS5Addr,
-		Username:   c.config.SOCKS5Username,
-		Password:   c.config.SOCKS5Password,
-	}
-	c.socks5 = socks5.NewServer(socks5Config, c.handleConnect)
-
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		if err := c.socks5.ListenAndServe(ctx); err != nil {
-			c.log.Error().Err(err).Msg("SOCKS5 server error")
+	// Start SOCKS5 server if enabled
+	if c.config.SOCKS5Enabled {
+		socks5Config := &socks5.Config{
+			ListenAddr: c.config.SOCKS5Addr,
+			Username:   c.config.SOCKS5Username,
+			Password:   c.config.SOCKS5Password,
 		}
-	}()
+		c.socks5 = socks5.NewServer(socks5Config, c.handleConnect)
 
-	c.log.Info().
-		Str("addr", c.config.SOCKS5Addr).
-		Msg("SOCKS5 proxy started")
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			if err := c.socks5.ListenAndServe(ctx); err != nil {
+				c.log.Error().Err(err).Msg("SOCKS5 server error")
+			}
+		}()
+
+		c.log.Info().
+			Str("addr", c.config.SOCKS5Addr).
+			Msg("SOCKS5 proxy started")
+	}
+
+	// Start port forwarding listeners
+	for _, pf := range c.config.PortForwards {
+		if err := c.startPortForward(ctx, pf); err != nil {
+			c.log.Error().Err(err).
+				Str("name", pf.Name).
+				Int("listen_port", pf.ListenPort).
+				Msg("Failed to start port forward")
+			// Continue with other port forwards even if one fails
+		}
+	}
 
 	return nil
 }
@@ -202,6 +233,12 @@ func (c *Client) cleanup() {
 		c.socks5.Close()
 	}
 
+	// Close port forward listeners
+	for _, listener := range c.portForwardListeners {
+		listener.Close()
+	}
+	c.portForwardListeners = nil
+
 	// Close all stream connections
 	c.streamConnsMu.Lock()
 	for _, sc := range c.streamConns {
@@ -225,7 +262,7 @@ func (c *Client) cleanup() {
 	}
 }
 
-// sendHandshake sends the initial handshake packet.
+// sendHandshake sends the initial handshake packet to both upstream and downstream.
 func (c *Client) sendHandshake() error {
 	pkt, err := protocol.NewPacket(c.session.ID, 0, protocol.FlagHandshake, nil)
 	if err != nil {
@@ -237,7 +274,17 @@ func (c *Client) sendHandshake() error {
 		return err
 	}
 
-	return c.upstream.Write(data)
+	// Send handshake to upstream
+	if err := c.upstream.Write(data); err != nil {
+		return fmt.Errorf("failed to send handshake to upstream: %w", err)
+	}
+
+	// Send handshake to downstream so server can register the downstream connection
+	if err := c.downstream.Write(data); err != nil {
+		return fmt.Errorf("failed to send handshake to downstream: %w", err)
+	}
+
+	return nil
 }
 
 // sendPacket sends a packet through the upstream connection.
@@ -466,6 +513,127 @@ func formatConnectPayload(host string, port uint16) []byte {
 	payload[portOffset+1] = byte(port)
 	
 	return payload
+}
+
+// startPortForward starts a listener for a port forwarding rule.
+func (c *Client) startPortForward(ctx context.Context, pf PortForward) error {
+	listenAddr := fmt.Sprintf("%s:%d", pf.ListenHost, pf.ListenPort)
+	
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", listenAddr, err)
+	}
+	
+	c.mu.Lock()
+	c.portForwardListeners = append(c.portForwardListeners, listener)
+	c.mu.Unlock()
+	
+	name := pf.Name
+	if name == "" {
+		name = fmt.Sprintf("port-%d", pf.ListenPort)
+	}
+	
+	c.log.Info().
+		Str("name", name).
+		Str("listen_addr", listenAddr).
+		Str("remote_host", pf.RemoteHost).
+		Int("remote_port", pf.RemotePort).
+		Msg("Port forward started")
+	
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.runPortForwardListener(ctx, listener, pf)
+	}()
+	
+	return nil
+}
+
+// runPortForwardListener accepts connections and forwards them.
+func (c *Client) runPortForwardListener(ctx context.Context, listener net.Listener, pf PortForward) {
+	defer listener.Close()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.shutdown:
+			return
+		default:
+		}
+		
+		// Set a deadline so we can check for shutdown periodically
+		if tcpListener, ok := listener.(*net.TCPListener); ok {
+			_ = tcpListener.SetDeadline(time.Now().Add(1 * time.Second))
+		}
+		
+		conn, err := listener.Accept()
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			// Check if we're shutting down
+			select {
+			case <-c.shutdown:
+				return
+			default:
+			}
+			c.log.Debug().Err(err).Msg("Error accepting port forward connection")
+			continue
+		}
+		
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			c.handlePortForwardConnection(ctx, conn, pf)
+		}()
+	}
+}
+
+// handlePortForwardConnection handles a single port forward connection.
+func (c *Client) handlePortForwardConnection(ctx context.Context, conn net.Conn, pf PortForward) {
+	defer conn.Close()
+	
+	// Open a new stream
+	streamID, err := c.mux.OpenStream()
+	if err != nil {
+		c.log.Error().Err(err).Msg("Failed to open stream for port forward")
+		return
+	}
+	
+	remoteHost := pf.RemoteHost
+	remotePort := uint16(pf.RemotePort)
+	
+	c.log.Debug().
+		Uint32("stream_id", streamID).
+		Str("remote_host", remoteHost).
+		Int("remote_port", int(remotePort)).
+		Msg("Opening stream for port forward")
+	
+	// Send connect packet to server
+	connectPayload := formatConnectPayload(remoteHost, remotePort)
+	if err := c.mux.SendPacket(streamID, protocol.FlagData|protocol.FlagHandshake, connectPayload); err != nil {
+		_ = c.mux.CloseStream(streamID)
+		c.log.Error().Err(err).Msg("Failed to send connect packet for port forward")
+		return
+	}
+	
+	// Register the stream connection
+	sc := &streamConn{
+		conn:     conn,
+		streamID: streamID,
+		done:     make(chan struct{}),
+	}
+	
+	c.streamConnsMu.Lock()
+	c.streamConns[streamID] = sc
+	c.streamConnsMu.Unlock()
+	
+	// Start reading from client and forwarding to upstream
+	go c.forwardClientToUpstream(ctx, sc)
+	
+	// Wait for the stream to complete
+	<-sc.done
 }
 
 // GetSessionID returns the current session ID.

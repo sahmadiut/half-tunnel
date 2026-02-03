@@ -78,11 +78,32 @@ func main() {
 	// Build SOCKS5 address from configuration
 	socks5Addr := fmt.Sprintf("%s:%d", cfg.SOCKS5.ListenHost, cfg.SOCKS5.ListenPort)
 
+	// Parse port forwards from configuration
+	portForwards, err := cfg.GetPortForwards()
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to parse port forwards")
+		os.Exit(1)
+	}
+
+	// Convert config port forwards to client port forwards
+	clientPortForwards := make([]client.PortForward, len(portForwards))
+	for i, pf := range portForwards {
+		clientPortForwards[i] = client.PortForward{
+			Name:       pf.Name,
+			ListenHost: pf.ListenHost,
+			ListenPort: pf.ListenPort,
+			RemoteHost: pf.RemoteHost,
+			RemotePort: pf.RemotePort,
+		}
+	}
+
 	// Create client configuration
 	clientConfig := &client.Config{
 		UpstreamURL:      cfg.Client.Upstream.URL,
 		DownstreamURL:    cfg.Client.Downstream.URL,
 		SOCKS5Addr:       socks5Addr,
+		SOCKS5Enabled:    cfg.SOCKS5.Enabled,
+		PortForwards:     clientPortForwards,
 		PingInterval:     cfg.Tunnel.Connection.KeepaliveInterval,
 		WriteTimeout:     cfg.Tunnel.Connection.DialTimeout,
 		ReadTimeout:      cfg.Tunnel.Connection.DialTimeout,
@@ -103,10 +124,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Info().
-		Str("session_id", c.GetSessionID().String()).
-		Str("socks5_addr", socks5Addr).
-		Msg("Client is ready")
+	// Log startup info
+	if cfg.SOCKS5.Enabled {
+		log.Info().
+			Str("session_id", c.GetSessionID().String()).
+			Str("socks5_addr", socks5Addr).
+			Int("port_forwards", len(clientPortForwards)).
+			Msg("Client is ready")
+	} else {
+		log.Info().
+			Str("session_id", c.GetSessionID().String()).
+			Int("port_forwards", len(clientPortForwards)).
+			Msg("Client is ready")
+	}
 
 	// Wait for shutdown
 	<-ctx.Done()
