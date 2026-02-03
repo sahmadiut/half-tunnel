@@ -6,21 +6,24 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 )
 
 // ServerConfig holds server transport configuration.
 type ServerConfig struct {
-	ReadBufferSize  int
-	WriteBufferSize int
-	MaxMessageSize  int64
+	ReadBufferSize       int
+	WriteBufferSize      int
+	MaxMessageSize       int64
+	ChannelBufferSize    int // Buffer size for connection channel
 }
 
 // DefaultServerConfig returns a ServerConfig with sensible defaults.
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
-		ReadBufferSize:  32768,
-		WriteBufferSize: 32768,
-		MaxMessageSize:  1024 * 1024, // 1MB
+		ReadBufferSize:    constants.DefaultBufferSize,
+		WriteBufferSize:   constants.DefaultBufferSize,
+		MaxMessageSize:    1024 * 1024, // 1MB
+		ChannelBufferSize: constants.DefaultChannelBufferSize,
 	}
 }
 
@@ -39,6 +42,11 @@ func NewServerHandler(config *ServerConfig) *ServerHandler {
 	if config == nil {
 		config = DefaultServerConfig()
 	}
+	
+	channelBufferSize := config.ChannelBufferSize
+	if channelBufferSize <= 0 {
+		channelBufferSize = constants.DefaultChannelBufferSize
+	}
 
 	return &ServerHandler{
 		upgrader: websocket.Upgrader{
@@ -49,7 +57,7 @@ func NewServerHandler(config *ServerConfig) *ServerHandler {
 			},
 		},
 		config:  config,
-		connCh:  make(chan *Connection, 100),
+		connCh:  make(chan *Connection, channelBufferSize),
 		closeCh: make(chan struct{}),
 	}
 }

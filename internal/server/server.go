@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/internal/protocol"
 	"github.com/sahmadiut/half-tunnel/internal/session"
 	"github.com/sahmadiut/half-tunnel/internal/socks5"
@@ -449,7 +450,7 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUID, streamID uint32, destConn net.Conn) {
 	defer s.closeNatEntry(sessionID, streamID)
 
-	buf := make([]byte, 32768)
+	buf := make([]byte, constants.DefaultBufferSize)
 
 	for {
 		select {

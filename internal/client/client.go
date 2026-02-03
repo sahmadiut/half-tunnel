@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/internal/mux"
 	"github.com/sahmadiut/half-tunnel/internal/protocol"
 	"github.com/sahmadiut/half-tunnel/internal/session"
@@ -370,7 +371,7 @@ func (c *Client) handleConnect(ctx context.Context, req *socks5.ConnectRequest) 
 
 // forwardClientToUpstream forwards data from the client to upstream.
 func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
-	buf := make([]byte, 32768)
+	buf := make([]byte, constants.DefaultBufferSize)
 
 	for {
 		select {

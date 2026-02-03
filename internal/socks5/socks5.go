@@ -3,6 +3,7 @@ package socks5
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -268,8 +269,10 @@ func (s *Server) handleUserPassAuth(conn net.Conn) error {
 		return err
 	}
 
-	// Verify credentials
-	if string(username) != s.config.Username || string(password) != s.config.Password {
+	// Verify credentials using constant-time comparison to prevent timing attacks
+	usernameMatch := subtle.ConstantTimeCompare(username, []byte(s.config.Username)) == 1
+	passwordMatch := subtle.ConstantTimeCompare(password, []byte(s.config.Password)) == 1
+	if !usernameMatch || !passwordMatch {
 		_, _ = conn.Write([]byte{0x01, 0x01}) // Auth failed
 		return ErrAuthFailed
 	}
