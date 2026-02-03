@@ -359,7 +359,13 @@ func TestCopyPacket(t *testing.T) {
 	// Verify it's a deep copy (modifying copy doesn't affect original)
 	copied.Payload[0] = 0xFF
 	if original.Payload[0] == 0xFF {
-		t.Error("Modifying copy should not affect original (not a deep copy)")
+		t.Error("Modifying copy payload should not affect original (not a deep copy)")
+	}
+
+	// Verify HMAC is also deeply copied
+	copied.HMAC[0] = 0xFF
+	if original.HMAC[0] == 0xFF {
+		t.Error("Modifying copy HMAC should not affect original (not a deep copy)")
 	}
 }
 

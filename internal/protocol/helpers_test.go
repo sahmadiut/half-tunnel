@@ -271,20 +271,58 @@ func TestIsControlPacket(t *testing.T) {
 func TestPacketType(t *testing.T) {
 	sessionID := uuid.New()
 
+	// Create packets with proper error handling
+	handshake, err := NewHandshakePacket(sessionID)
+	if err != nil {
+		t.Fatalf("NewHandshakePacket failed: %v", err)
+	}
+	handshakeAck, err := NewHandshakeAckPacket(sessionID)
+	if err != nil {
+		t.Fatalf("NewHandshakeAckPacket failed: %v", err)
+	}
+	data, err := NewDataPacket(sessionID, 1, nil)
+	if err != nil {
+		t.Fatalf("NewDataPacket failed: %v", err)
+	}
+	dataAck, err := NewDataAckPacket(sessionID, 1, nil, 1)
+	if err != nil {
+		t.Fatalf("NewDataAckPacket failed: %v", err)
+	}
+	ack, err := NewAckPacket(sessionID, 1, 1)
+	if err != nil {
+		t.Fatalf("NewAckPacket failed: %v", err)
+	}
+	keepalive, err := NewKeepAlivePacket(sessionID)
+	if err != nil {
+		t.Fatalf("NewKeepAlivePacket failed: %v", err)
+	}
+	keepaliveAck, err := NewKeepAliveAckPacket(sessionID)
+	if err != nil {
+		t.Fatalf("NewKeepAliveAckPacket failed: %v", err)
+	}
+	fin, err := NewFinPacket(sessionID, 1)
+	if err != nil {
+		t.Fatalf("NewFinPacket failed: %v", err)
+	}
+	finAck, err := NewFinAckPacket(sessionID, 1, 1)
+	if err != nil {
+		t.Fatalf("NewFinAckPacket failed: %v", err)
+	}
+
 	tests := []struct {
 		name     string
 		packet   *Packet
 		expected string
 	}{
-		{"handshake", func() *Packet { p, _ := NewHandshakePacket(sessionID); return p }(), "HANDSHAKE"},
-		{"handshake_ack", func() *Packet { p, _ := NewHandshakeAckPacket(sessionID); return p }(), "HANDSHAKE_ACK"},
-		{"data", func() *Packet { p, _ := NewDataPacket(sessionID, 1, nil); return p }(), "DATA"},
-		{"data_ack", func() *Packet { p, _ := NewDataAckPacket(sessionID, 1, nil, 1); return p }(), "DATA_ACK"},
-		{"ack", func() *Packet { p, _ := NewAckPacket(sessionID, 1, 1); return p }(), "ACK"},
-		{"keepalive", func() *Packet { p, _ := NewKeepAlivePacket(sessionID); return p }(), "KEEPALIVE"},
-		{"keepalive_ack", func() *Packet { p, _ := NewKeepAliveAckPacket(sessionID); return p }(), "KEEPALIVE_ACK"},
-		{"fin", func() *Packet { p, _ := NewFinPacket(sessionID, 1); return p }(), "FIN"},
-		{"fin_ack", func() *Packet { p, _ := NewFinAckPacket(sessionID, 1, 1); return p }(), "FIN_ACK"},
+		{"handshake", handshake, "HANDSHAKE"},
+		{"handshake_ack", handshakeAck, "HANDSHAKE_ACK"},
+		{"data", data, "DATA"},
+		{"data_ack", dataAck, "DATA_ACK"},
+		{"ack", ack, "ACK"},
+		{"keepalive", keepalive, "KEEPALIVE"},
+		{"keepalive_ack", keepaliveAck, "KEEPALIVE_ACK"},
+		{"fin", fin, "FIN"},
+		{"fin_ack", finAck, "FIN_ACK"},
 	}
 
 	for _, tt := range tests {
