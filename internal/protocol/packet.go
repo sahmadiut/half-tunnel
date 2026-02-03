@@ -27,6 +27,7 @@ const (
 	FlagFin       Flag = 0x04
 	FlagKeepAlive Flag = 0x08
 	FlagHandshake Flag = 0x10
+	FlagReconnect Flag = 0x20 // Indicates a reconnection attempt
 	FlagHMAC      Flag = 0x80 // Indicates HMAC is present
 )
 
@@ -260,6 +261,11 @@ func (p *Packet) IsKeepAlive() bool {
 // IsHandshake returns true if the packet is a handshake.
 func (p *Packet) IsHandshake() bool {
 	return p.Flags&FlagHandshake != 0
+}
+
+// IsReconnect returns true if the packet is a reconnection attempt.
+func (p *Packet) IsReconnect() bool {
+	return p.Flags&FlagReconnect != 0
 }
 
 // HasHMAC returns true if the packet contains HMAC.

@@ -40,9 +40,10 @@ HMAC-SHA256 authentication tag when FlagHMAC is set.
 | 2   | FIN        | 0x04  | Connection termination                |
 | 3   | KEEPALIVE  | 0x08  | Keep-alive ping                       |
 | 4   | HANDSHAKE  | 0x10  | Session establishment                 |
+| 5   | RECONNECT  | 0x20  | Session reconnection attempt          |
 | 7   | HMAC       | 0x80  | HMAC authentication present           |
 
-Flags can be combined. For example, `DATA | ACK` (0x03) indicates a data packet that also acknowledges received data.
+Flags can be combined. For example, `DATA | ACK` (0x03) indicates a data packet that also acknowledges received data. `RECONNECT | HANDSHAKE` (0x30) indicates a reconnection handshake.
 
 ## Session Lifecycle
 
@@ -80,6 +81,29 @@ Client                                    Server
    │◀─── FIN+ACK (StreamID) ─────────────────│
    │                                         │
 ```
+
+### 4. Session Reconnection
+
+When a connection is lost, the client can attempt to resume the session:
+
+```
+Client                                    Server
+   │                                         │
+   │    [Connection Lost]                    │
+   │                                         │
+   │──── RECONNECT+HANDSHAKE (SessionID) ───▶│  (via Upstream/Domain A)
+   │                                         │
+   │◀─── RECONNECT+ACK (SessionID) ─────────│  (via Downstream/Domain B)
+   │                                         │
+   │    [Session Resumed, Streams Restored]  │
+   │                                         │
+```
+
+Reconnection uses exponential backoff with jitter:
+- Initial delay: 1 second
+- Maximum delay: 60 seconds
+- Multiplier: 2.0
+- Jitter: 10%
 
 ## Stream States
 
