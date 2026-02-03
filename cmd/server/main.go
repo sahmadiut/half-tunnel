@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/sahmadiut/half-tunnel/internal/config"
-	"github.com/sahmadiut/half-tunnel/internal/session"
+	"github.com/sahmadiut/half-tunnel/internal/server"
 	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
 
@@ -56,10 +56,6 @@ func main() {
 		Str("downstream_addr", cfg.Server.DownstreamAddr).
 		Msg("Starting Half-Tunnel server")
 
-	// Create session store
-	sessionStore := session.NewStore(cfg.Server.Session.IdleTimeout)
-	defer sessionStore.Close()
-
 	// Set up context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -74,13 +70,28 @@ func main() {
 		cancel()
 	}()
 
-	// TODO: Implement server logic
-	// 1. Start upstream WebSocket listener on Domain A
-	// 2. Start downstream WebSocket listener on Domain B
-	// 3. Handle incoming connections and route packets
-	// 4. Implement NAT table for outbound connections
+	// Create server configuration
+	serverConfig := &server.Config{
+		UpstreamAddr:    cfg.Server.UpstreamAddr,
+		UpstreamPath:    "/upstream",
+		DownstreamAddr:  cfg.Server.DownstreamAddr,
+		DownstreamPath:  "/downstream",
+		SessionTimeout:  cfg.Server.Session.IdleTimeout,
+		MaxSessions:     cfg.Server.Session.MaxSessions,
+		ReadBufferSize:  32768,
+		WriteBufferSize: 32768,
+		MaxMessageSize:  65536,
+		DialTimeout:     10 * time.Second,
+	}
 
-	log.Info().Msg("Server is ready (placeholder)")
+	// Create and start the server
+	s := server.New(serverConfig, log)
+	if err := s.Start(ctx); err != nil {
+		log.Error().Err(err).Msg("Failed to start server")
+		os.Exit(1)
+	}
+
+	log.Info().Msg("Server is ready")
 
 	// Periodic stats logging
 	go func() {
@@ -92,7 +103,8 @@ func main() {
 				return
 			case <-ticker.C:
 				log.Info().
-					Int("active_sessions", sessionStore.Count()).
+					Int("active_sessions", s.GetSessionCount()).
+					Int("nat_entries", s.GetNatEntryCount()).
 					Msg("Server stats")
 			}
 		}
@@ -101,4 +113,12 @@ func main() {
 	// Wait for shutdown
 	<-ctx.Done()
 	log.Info().Msg("Shutting down server")
+
+	// Stop the server with a timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := s.Stop(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("Error stopping server")
+	}
 }

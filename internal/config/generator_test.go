@@ -12,7 +12,7 @@ func TestNewConfigGenerator(t *testing.T) {
 
 	gen := NewConfigGenerator(reader, writer, true)
 	if gen == nil {
-		t.Error("Expected non-nil generator")
+		t.Fatal("Expected non-nil generator")
 	}
 	if !gen.isInteractive {
 		t.Error("Expected interactive mode")
@@ -22,7 +22,7 @@ func TestNewConfigGenerator(t *testing.T) {
 func TestNewNonInteractiveGenerator(t *testing.T) {
 	gen := NewNonInteractiveGenerator()
 	if gen == nil {
-		t.Error("Expected non-nil generator")
+		t.Fatal("Expected non-nil generator")
 	}
 	if gen.isInteractive {
 		t.Error("Expected non-interactive mode")

@@ -127,14 +127,11 @@ func (c *Connection) Close() error {
 	c.closed = true
 	close(c.closedCh)
 
-	// Send close message
-	err := c.conn.WriteMessage(
+	// Send close message (best effort, ignore errors)
+	_ = c.conn.WriteMessage(
 		websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 	)
-	if err != nil && !errors.Is(err, websocket.ErrCloseSent) {
-		// Best effort, continue to close
-	}
 
 	return c.conn.Close()
 }
