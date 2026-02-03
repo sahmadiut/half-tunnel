@@ -92,13 +92,17 @@ type Client struct {
 	streamConnsMu sync.RWMutex
 
 	// State
-	running      int32
-	reconnecting int32
-	ctx          context.Context
-	shutdown     chan struct{}
-	wg           sync.WaitGroup
-	mu           sync.RWMutex
+	running          int32
+	reconnecting     int32
+	lastKeepAliveAck int64
+	ctx              context.Context
+	cancel           context.CancelFunc
+	shutdown         chan struct{}
+	wg               sync.WaitGroup
+	mu               sync.RWMutex
 }
+
+var dialTransport = transport.Dial
 
 // streamConn holds the connection associated with a stream.
 type streamConn struct {
@@ -133,7 +137,9 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("client already running")
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
 	c.ctx = ctx
+	c.cancel = cancel
 
 	// Create a new session
 	c.session = session.New()
@@ -147,13 +153,19 @@ func (c *Client) Start(ctx context.Context) error {
 	c.mux.SetPacketHandler(c.sendPacket)
 
 	if err := c.connect(ctx); err != nil {
-		c.cleanup()
-		return err
+		if c.shouldReconnect() && ctx.Err() == nil {
+			c.log.Warn().Err(err).Msg("Initial connection failed, starting reconnect loop")
+			c.triggerReconnect("startup")
+		} else {
+			cancel()
+			c.cleanup()
+			return err
+		}
+	} else {
+		// Start downstream reader goroutine
+		c.wg.Add(1)
+		go c.readDownstream(ctx)
 	}
-
-	// Start downstream reader goroutine
-	c.wg.Add(1)
-	go c.readDownstream(ctx)
 
 	if c.config.PingInterval > 0 {
 		c.wg.Add(1)
@@ -202,9 +214,11 @@ func (c *Client) Stop() error {
 		return nil
 	}
 
+	if c.cancel != nil {
+		c.cancel()
+	}
 	close(c.shutdown)
 	c.cleanup()
-	c.wg.Wait()
 
 	c.log.Info().Msg("Client stopped")
 	return nil
@@ -216,6 +230,7 @@ func (c *Client) cleanup() {
 	defer c.mu.Unlock()
 
 	atomic.StoreInt32(&c.reconnecting, 0)
+	atomic.StoreInt64(&c.lastKeepAliveAck, 0)
 
 	// Close SOCKS5 server
 	if c.socks5 != nil {
@@ -243,7 +258,7 @@ func (c *Client) cleanup() {
 	}
 
 	// Close transport connections
-	c.cleanupConnections()
+	c.cleanupConnectionsLocked()
 }
 
 // sendHandshake sends the initial handshake packet to both upstream and downstream.
@@ -353,6 +368,7 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 	}
 
 	if pkt.IsKeepAlive() && pkt.IsAck() {
+		c.recordKeepAliveAck()
 		return
 	}
 
@@ -534,18 +550,25 @@ func (c *Client) connect(ctx context.Context) error {
 	downstreamConfig.ReadTimeout = c.config.ReadTimeout
 	downstreamConfig.WriteTimeout = c.config.WriteTimeout
 
-	upstream, err := transport.Dial(ctx, upstreamConfig)
+	upstreamCtx, upstreamCancel := c.dialContext(ctx)
+	defer upstreamCancel()
+
+	upstream, err := dialTransport(upstreamCtx, upstreamConfig)
 	if err != nil {
 		return fmt.Errorf("failed to connect to upstream: %w", err)
 	}
 
-	downstream, err := transport.Dial(ctx, downstreamConfig)
+	downstreamCtx, downstreamCancel := c.dialContext(ctx)
+	defer downstreamCancel()
+
+	downstream, err := dialTransport(downstreamCtx, downstreamConfig)
 	if err != nil {
 		upstream.Close()
 		return fmt.Errorf("failed to connect to downstream: %w", err)
 	}
 
 	c.mu.Lock()
+	c.cleanupConnectionsLocked()
 	c.upstream = upstream
 	c.downstream = downstream
 	c.mu.Unlock()
@@ -563,7 +586,15 @@ func (c *Client) connect(ctx context.Context) error {
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}
 
+	c.recordKeepAliveAck()
 	return nil
+}
+
+func (c *Client) dialContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.config.DialTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, c.config.DialTimeout)
 }
 
 func (c *Client) keepaliveLoop(ctx context.Context) {
@@ -579,6 +610,13 @@ func (c *Client) keepaliveLoop(ctx context.Context) {
 		case <-c.shutdown:
 			return
 		case <-ticker.C:
+			if c.keepaliveExpired() {
+				c.log.Warn().Msg("Keepalive ack timeout, reconnecting")
+				if c.shouldReconnect() {
+					c.triggerReconnect("keepalive-timeout")
+				}
+				continue
+			}
 			if err := c.sendKeepAlive(); err != nil {
 				c.log.Debug().Err(err).Msg("Failed to send keepalive")
 				if c.shouldReconnect() {
@@ -619,10 +657,30 @@ func (c *Client) sendKeepAliveAck() error {
 	return downstream.Write(data)
 }
 
+func (c *Client) recordKeepAliveAck() {
+	atomic.StoreInt64(&c.lastKeepAliveAck, time.Now().UnixNano())
+}
+
+func (c *Client) keepaliveExpired() bool {
+	if c.config.PingInterval <= 0 {
+		return false
+	}
+	lastAck := atomic.LoadInt64(&c.lastKeepAliveAck)
+	if lastAck == 0 {
+		return false
+	}
+	ackTime := time.Unix(0, lastAck)
+	return time.Since(ackTime) > c.config.PingInterval*2
+}
+
 func (c *Client) cleanupConnections() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.cleanupConnectionsLocked()
+}
+
+func (c *Client) cleanupConnectionsLocked() {
 	if c.upstream != nil {
 		c.upstream.Close()
 		c.upstream = nil
@@ -852,4 +910,11 @@ func (c *Client) GetSessionID() uuid.UUID {
 		return uuid.Nil
 	}
 	return c.session.ID
+}
+
+// IsConnected reports whether both upstream and downstream connections are active.
+func (c *Client) IsConnected() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.upstream != nil && c.downstream != nil
 }
