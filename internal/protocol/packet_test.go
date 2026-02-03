@@ -190,22 +190,25 @@ func TestPacketFlags(t *testing.T) {
 	sessionID := uuid.New()
 
 	tests := []struct {
-		flag    Flag
-		isData  bool
-		isAck   bool
-		isFin   bool
-		isKA    bool
-		isHS    bool
-		hasHMAC bool
+		flag      Flag
+		isData    bool
+		isAck     bool
+		isFin     bool
+		isKA      bool
+		isHS      bool
+		isReconn  bool
+		hasHMAC   bool
 	}{
-		{FlagData, true, false, false, false, false, false},
-		{FlagAck, false, true, false, false, false, false},
-		{FlagFin, false, false, true, false, false, false},
-		{FlagKeepAlive, false, false, false, true, false, false},
-		{FlagHandshake, false, false, false, false, true, false},
-		{FlagHMAC, false, false, false, false, false, true},
-		{FlagData | FlagAck, true, true, false, false, false, false},
-		{FlagData | FlagHMAC, true, false, false, false, false, true},
+		{FlagData, true, false, false, false, false, false, false},
+		{FlagAck, false, true, false, false, false, false, false},
+		{FlagFin, false, false, true, false, false, false, false},
+		{FlagKeepAlive, false, false, false, true, false, false, false},
+		{FlagHandshake, false, false, false, false, true, false, false},
+		{FlagReconnect, false, false, false, false, false, true, false},
+		{FlagHMAC, false, false, false, false, false, false, true},
+		{FlagData | FlagAck, true, true, false, false, false, false, false},
+		{FlagData | FlagHMAC, true, false, false, false, false, false, true},
+		{FlagReconnect | FlagHandshake, false, false, false, false, true, true, false},
 	}
 
 	for _, tt := range tests {
@@ -224,6 +227,9 @@ func TestPacketFlags(t *testing.T) {
 		}
 		if pkt.IsHandshake() != tt.isHS {
 			t.Errorf("Flag %v: IsHandshake() = %v, want %v", tt.flag, pkt.IsHandshake(), tt.isHS)
+		}
+		if pkt.IsReconnect() != tt.isReconn {
+			t.Errorf("Flag %v: IsReconnect() = %v, want %v", tt.flag, pkt.IsReconnect(), tt.isReconn)
 		}
 		if pkt.HasHMAC() != tt.hasHMAC {
 			t.Errorf("Flag %v: HasHMAC() = %v, want %v", tt.flag, pkt.HasHMAC(), tt.hasHMAC)
