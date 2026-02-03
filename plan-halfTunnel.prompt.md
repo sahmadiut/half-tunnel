@@ -48,6 +48,357 @@ half-tunnel/
 
 ---
 
+## Phase 1.5: Configuration Files (YAML)
+
+**Objective:** Define YAML configuration files for both client and server. Port mappings are defined only on the client side - the server acts as a transparent proxy for any destination requested by authenticated clients.
+
+### Server Configuration (`configs/server.yml`)
+
+```yaml
+# Half-Tunnel Server Configuration
+server:
+  # Server identification
+  name: "exit-server-01"
+  
+  # Upstream listener (Domain A) - receives client requests
+  upstream:
+    host: "0.0.0.0"
+    port: 8443
+    path: "/ws/upstream"
+    tls:
+      enabled: true
+      cert_file: "/etc/half-tunnel/certs/server.crt"
+      key_file: "/etc/half-tunnel/certs/server.key"
+  
+  # Downstream listener (Domain B) - sends responses to client
+  downstream:
+    host: "0.0.0.0"
+    port: 8444
+    path: "/ws/downstream"
+    tls:
+      enabled: true
+      cert_file: "/etc/half-tunnel/certs/server.crt"
+      key_file: "/etc/half-tunnel/certs/server.key"
+
+# Access control (server doesn't define ports - client requests any destination)
+access:
+  # Allowed destination networks (empty = allow all)
+  allowed_networks:
+    - "0.0.0.0/0"           # Allow all IPv4
+    - "::/0"                # Allow all IPv6
+  # Blocked destinations (takes priority over allowed)
+  blocked_networks:
+    - "10.0.0.0/8"          # Block private networks (optional)
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  # Max connections per session
+  max_streams_per_session: 100
+
+# Tunnel settings
+tunnel:
+  # Session management
+  session:
+    timeout: "5m"           # Idle session timeout
+    max_sessions: 1000      # Maximum concurrent sessions
+    
+  # Connection settings
+  connection:
+    read_buffer_size: 32768
+    write_buffer_size: 32768
+    keepalive_interval: "30s"
+    max_message_size: 65536
+    
+  # Encryption
+  encryption:
+    enabled: true
+    algorithm: "aes-256-gcm"  # Options: aes-256-gcm, chacha20-poly1305
+
+# Logging
+logging:
+  level: "info"             # debug, info, warn, error
+  format: "json"            # json, text
+  output: "/var/log/half-tunnel/server.log"
+
+# Metrics & Health
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  health:
+    enabled: true
+    port: 8080
+    path: "/healthz"
+```
+
+### Client Configuration (`configs/client.yml`)
+
+```yaml
+# Half-Tunnel Client Configuration
+client:
+  # Client identification
+  name: "entry-client-01"
+  
+  # Upstream connection (Domain A) - sends requests to server
+  upstream:
+    url: "wss://domain-a.example.com:8443/ws/upstream"
+    tls:
+      enabled: true
+      skip_verify: false
+      ca_file: "/etc/half-tunnel/certs/ca.crt"
+      
+  # Downstream connection (Domain B) - receives responses from server
+  downstream:
+    url: "wss://domain-b.example.com:8444/ws/downstream"
+    tls:
+      enabled: true
+      skip_verify: false
+      ca_file: "/etc/half-tunnel/certs/ca.crt"
+
+# Port forwarding rules (all port definitions are on client side)
+# Client tells server which destination to connect to
+port_forwards:
+  - name: "web-proxy"
+    listen_host: "127.0.0.1"    # Local address to listen on
+    listen_port: 8080            # Local port to listen on
+    remote_host: "example.com"   # Destination host (server connects to this)
+    remote_port: 80              # Destination port
+    protocol: "tcp"
+    
+  - name: "https-proxy"
+    listen_host: "127.0.0.1"
+    listen_port: 8443
+    remote_host: "secure.example.com"
+    remote_port: 443
+    protocol: "tcp"
+    
+  - name: "ssh-tunnel"
+    listen_host: "127.0.0.1"
+    listen_port: 2222
+    remote_host: "ssh.internal.company.com"
+    remote_port: 22
+    protocol: "tcp"
+    
+  - name: "database"
+    listen_host: "127.0.0.1"
+    listen_port: 5432
+    remote_host: "db.internal.company.com"
+    remote_port: 5432
+    protocol: "tcp"
+
+# SOCKS5 Proxy (for dynamic port forwarding - any destination)
+socks5:
+  enabled: true
+  listen_host: "127.0.0.1"
+  listen_port: 1080
+  auth:
+    enabled: false
+    username: ""
+    password: ""
+
+# Tunnel settings
+tunnel:
+  # Reconnection strategy
+  reconnect:
+    enabled: true
+    initial_delay: "1s"
+    max_delay: "60s"
+    multiplier: 2.0
+    jitter: 0.1
+    
+  # Connection settings
+  connection:
+    read_buffer_size: 32768
+    write_buffer_size: 32768
+    keepalive_interval: "30s"
+    dial_timeout: "10s"
+    
+  # Encryption (must match server)
+  encryption:
+    enabled: true
+    algorithm: "aes-256-gcm"
+
+# DNS settings (for full VPN mode)
+dns:
+  enabled: false
+  listen_host: "127.0.0.1"
+  listen_port: 5353
+  upstream_servers:
+    - "8.8.8.8:53"
+    - "1.1.1.1:53"
+
+# Logging
+logging:
+  level: "info"
+  format: "json"
+  output: "/var/log/half-tunnel/client.log"
+
+# Local metrics
+observability:
+  metrics:
+    enabled: true
+    port: 9091
+    path: "/metrics"
+```
+
+---
+
+### Configuration Generator (CLI Commands)
+
+**Objective:** The application should be able to generate configuration files for users interactively or via CLI flags.
+
+**CLI Commands:**
+
+```bash
+# Generate server config interactively
+half-tunnel config generate --type server --output server.yml
+
+# Generate client config interactively
+half-tunnel config generate --type client --output client.yml
+
+# Generate client config with flags (non-interactive)
+half-tunnel config generate --type client \
+  --upstream-url "wss://domain-a.example.com:8443/ws/upstream" \
+  --downstream-url "wss://domain-b.example.com:8444/ws/downstream" \
+  --port-forward "8080:example.com:80" \
+  --port-forward "2222:ssh.server.com:22" \
+  --socks5-port 1080 \
+  --output client.yml
+
+# Generate server config with flags
+half-tunnel config generate --type server \
+  --upstream-port 8443 \
+  --downstream-port 8444 \
+  --tls-cert /path/to/cert.pem \
+  --tls-key /path/to/key.pem \
+  --output server.yml
+
+# Validate existing config
+half-tunnel config validate --config client.yml
+
+# Show sample config
+half-tunnel config sample --type client
+half-tunnel config sample --type server
+```
+
+**Interactive Mode Example:**
+```
+$ half-tunnel config generate --type client
+
+🔧 Half-Tunnel Client Configuration Generator
+
+? Enter a name for this client: my-laptop
+? Upstream server URL: wss://up.example.com:8443/ws/upstream
+? Downstream server URL: wss://down.example.com:8444/ws/downstream
+? Enable TLS verification? Yes
+? CA certificate path (optional): 
+
+📡 Port Forwarding Rules
+? Add a port forward? Yes
+? Local listen address [127.0.0.1]: 
+? Local port: 8080
+? Remote host: api.internal.com
+? Remote port: 80
+? Add another port forward? Yes
+? Local listen address [127.0.0.1]: 
+? Local port: 3306
+? Remote host: db.internal.com
+? Remote port: 3306
+? Add another port forward? No
+
+🧦 SOCKS5 Proxy
+? Enable SOCKS5 proxy? Yes
+? SOCKS5 listen port [1080]: 
+
+✅ Configuration saved to: client.yml
+```
+
+**Implementation (`internal/config/generator.go`):**
+
+```go
+// ConfigGenerator handles interactive and flag-based config generation
+type ConfigGenerator struct {
+    reader   io.Reader
+    writer   io.Writer
+    isInteractive bool
+}
+
+// GenerateClientConfig creates a new client configuration
+func (g *ConfigGenerator) GenerateClientConfig(opts GenerateOptions) (*ClientConfig, error)
+
+// GenerateServerConfig creates a new server configuration  
+func (g *ConfigGenerator) GenerateServerConfig(opts GenerateOptions) (*ServerConfig, error)
+
+// ParsePortForward parses "localPort:remoteHost:remotePort" format
+func ParsePortForward(spec string) (*PortForward, error)
+
+// ValidateConfig validates a config file
+func ValidateConfig(path string, configType string) error
+```
+
+**Steps for Config Generator:**
+1. Create `cmd/half-tunnel/config.go` with config subcommands
+2. Implement `internal/config/generator.go` for config generation logic
+3. Use `survey` or `promptui` library for interactive prompts
+4. Support both interactive and non-interactive (flag-based) modes
+5. Implement config validation with detailed error messages
+6. Add `config sample` command to print example configs
+
+---
+
+### Configuration Loading (`internal/config/`)
+
+**Config Structures:**
+```go
+// ServerConfig represents server configuration
+type ServerConfig struct {
+    Server        ServerSettings   `yaml:"server"`
+    PortMappings  []PortMapping    `yaml:"port_mappings"`
+    Tunnel        TunnelConfig     `yaml:"tunnel"`
+    Logging       LogConfig        `yaml:"logging"`
+    Observability ObservConfig     `yaml:"observability"`
+}
+
+// ClientConfig represents client configuration
+type ClientConfig struct {
+    Client        ClientSettings   `yaml:"client"`
+    LocalPorts    []LocalPort      `yaml:"local_ports"`
+    SOCKS5        SOCKS5Config     `yaml:"socks5"`
+    Tunnel        TunnelConfig     `yaml:"tunnel"`
+    DNS           DNSConfig        `yaml:"dns"`
+    Logging       LogConfig        `yaml:"logging"`
+    Observability ObservConfig     `yaml:"observability"`
+}
+
+// PortMapping defines server-side port forwarding
+type PortMapping struct {
+    Name       string `yaml:"name"`
+    ListenPort int    `yaml:"listen_port"`
+    TargetHost string `yaml:"target_host"`
+    TargetPort int    `yaml:"target_port"`
+    Protocol   string `yaml:"protocol"`
+}
+
+// LocalPort defines client-side local listeners
+type LocalPort struct {
+    Name       string `yaml:"name"`
+    ListenHost string `yaml:"listen_host"`
+    ListenPort int    `yaml:"listen_port"`
+    RemotePort int    `yaml:"remote_port"`
+    Protocol   string `yaml:"protocol"`
+}
+```
+
+**Steps:**
+1. Create `internal/config/server.go` with `LoadServerConfig()` function
+2. Create `internal/config/client.go` with `LoadClientConfig()` function
+3. Implement validation logic for required fields and port ranges
+4. Support config file path via CLI flag (`-c` / `--config`)
+5. Support environment variable overrides (e.g., `HALFTUNNEL_SERVER_UPSTREAM_PORT`)
+6. Create sample configs in `configs/` directory
+
+---
+
 ## Phase 2: Protocol Design & Packet Encapsulation
 
 **Objective:** Define the wire format for split-path communication with UUID correlation.
@@ -217,9 +568,11 @@ half-tunnel/
 | Checkpoint                  | Validation Method                                      |
 |-----------------------------|--------------------------------------------------------|
 | Project builds              | `make build` succeeds on CI                            |
+| Config files valid          | `make validate-config` parses sample YAML configs      |
 | Tests pass                  | `make test` with 70%+ coverage                         |
 | Lint clean                  | `golangci-lint run` with no errors                     |
 | Protocol correctness        | Fuzz tests + integration tests                         |
+| Port mappings work          | Test each configured port forwards correctly           |
 | Split-path works            | E2E test: traffic observed on both Domain A and B only |
 | Reconnection works          | Chaos test: kill upstream, verify session resume       |
 | Docker images functional    | `docker-compose up` → client connects successfully     |
@@ -229,6 +582,9 @@ half-tunnel/
 
 ## Decisions
 
+- **YAML for configuration**: Human-readable, widely supported, good for port mappings and nested structures
+- **Separate config files for client/server**: Clearer separation of concerns, easier to deploy and manage
+- **Port mapping approach**: Explicit port-to-port mappings allow fine-grained control; SOCKS5 for dynamic forwarding
 - **SOCKS5 over TUN for Phase 1**: Simpler cross-platform, avoids OS-level permissions; TUN can be Phase 2 enhancement
 - **Binary protocol over JSON**: Lower overhead for high-throughput tunneling
 - **UUID v4 for SessionID**: Cryptographically random, no coordination needed
