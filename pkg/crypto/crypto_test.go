@@ -123,10 +123,10 @@ func TestGenerateKey(t *testing.T) {
 
 func TestDeriveKey(t *testing.T) {
 	password := []byte("password123")
-	salt := []byte("somesalt")
+	salt := []byte("somesalt12345678") // 16 bytes minimum for Argon2
 
 	key1 := DeriveKey(password, salt)
-	if len(key1) != 32 { // SHA256 output
+	if len(key1) != 32 { // Argon2 output
 		t.Errorf("Derived key length should be 32, got %d", len(key1))
 	}
 
@@ -137,9 +137,25 @@ func TestDeriveKey(t *testing.T) {
 	}
 
 	// Different salt should produce different key
-	key3 := DeriveKey(password, []byte("othersalt"))
+	key3 := DeriveKey(password, []byte("othersalt1234567"))
 	if bytes.Equal(key1, key3) {
 		t.Error("Different salt should produce different key")
+	}
+}
+
+func TestDeriveKeySHA256(t *testing.T) {
+	data := []byte("some data")
+	salt := []byte("salt")
+
+	key1 := DeriveKeySHA256(data, salt)
+	if len(key1) != 32 {
+		t.Errorf("Derived key length should be 32, got %d", len(key1))
+	}
+
+	// Same inputs should produce same key
+	key2 := DeriveKeySHA256(data, salt)
+	if !bytes.Equal(key1, key2) {
+		t.Error("Same inputs should produce same key")
 	}
 }
 

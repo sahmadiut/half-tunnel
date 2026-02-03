@@ -9,6 +9,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // Errors
@@ -126,10 +128,25 @@ func GenerateHMACKey() ([]byte, error) {
 	return GenerateKey(HMACKeySize)
 }
 
-// DeriveKey derives a key from a password using SHA-256.
-// Note: In production, use a proper KDF like Argon2 or scrypt.
+// Argon2 parameters (OWASP recommendations)
+const (
+	Argon2Time    = 3      // Number of iterations
+	Argon2Memory  = 64 * 1024 // Memory in KB (64 MB)
+	Argon2Threads = 4      // Number of threads
+	Argon2KeyLen  = 32     // Output key length
+)
+
+// DeriveKey derives a key from a password using Argon2id.
+// Argon2id is the recommended KDF for password hashing, resistant to both
+// side-channel and GPU attacks.
 func DeriveKey(password []byte, salt []byte) []byte {
-	data := append(password, salt...)
-	hash := sha256.Sum256(data)
+	return argon2.IDKey(password, salt, Argon2Time, Argon2Memory, Argon2Threads, Argon2KeyLen)
+}
+
+// DeriveKeySHA256 derives a key using SHA-256 (fast, for non-password use cases).
+// WARNING: Do not use for password-based key derivation - use DeriveKey instead.
+func DeriveKeySHA256(data []byte, salt []byte) []byte {
+	combined := append(data, salt...)
+	hash := sha256.Sum256(combined)
 	return hash[:]
 }

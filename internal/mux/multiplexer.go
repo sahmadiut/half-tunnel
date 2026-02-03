@@ -181,31 +181,69 @@ func (m *Multiplexer) Close() error {
 	return nil
 }
 
-// StreamBuffer provides a simple buffer for stream data.
-// In production, this would be a ring buffer for out-of-order packet reassembly.
+// ErrBufferFull is returned when the stream buffer is full.
+var ErrBufferFull = errors.New("stream buffer is full")
+
+// StreamBuffer provides a simple buffer for stream data with bounded memory.
+// It tracks out-of-order segments and reassembles them in sequence order.
 type StreamBuffer struct {
-	data     []byte
-	maxSize  int
-	mu       sync.Mutex
-	segments map[uint32][]byte // SeqNum -> data for out-of-order handling
+	data           []byte
+	maxSize        int
+	mu             sync.Mutex
+	segments       map[uint32][]byte // SeqNum -> data for out-of-order handling
+	nextExpectedSeq uint32           // Next expected sequence number
 }
 
 // NewStreamBuffer creates a new stream buffer with the given max size.
 func NewStreamBuffer(maxSize int) *StreamBuffer {
 	return &StreamBuffer{
-		maxSize:  maxSize,
-		segments: make(map[uint32][]byte),
+		maxSize:         maxSize,
+		segments:        make(map[uint32][]byte),
+		nextExpectedSeq: 0,
 	}
 }
 
 // Write adds data to the buffer at the given sequence number.
+// Returns ErrBufferFull if the buffer would exceed maxSize.
 func (b *StreamBuffer) Write(seqNum uint32, data []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Simple implementation: just append for now
-	// Production would handle out-of-order segments
-	b.data = append(b.data, data...)
+	// Calculate current total size including pending segments
+	totalSize := len(b.data)
+	for _, seg := range b.segments {
+		totalSize += len(seg)
+	}
+
+	// Check if adding this data would exceed the max size
+	if totalSize+len(data) > b.maxSize {
+		return ErrBufferFull
+	}
+
+	// If this is the next expected sequence, append directly and flush any consecutive segments
+	if seqNum == b.nextExpectedSeq {
+		b.data = append(b.data, data...)
+		b.nextExpectedSeq++
+
+		// Flush any consecutive segments that are now in order
+		for {
+			if segment, ok := b.segments[b.nextExpectedSeq]; ok {
+				b.data = append(b.data, segment...)
+				delete(b.segments, b.nextExpectedSeq)
+				b.nextExpectedSeq++
+			} else {
+				break
+			}
+		}
+	} else if seqNum > b.nextExpectedSeq {
+		// Out-of-order packet: store in segments map for later reassembly
+		// Skip if we've already seen this sequence number
+		if _, exists := b.segments[seqNum]; !exists {
+			b.segments[seqNum] = make([]byte, len(data))
+			copy(b.segments[seqNum], data)
+		}
+	}
+	// Ignore packets with seqNum < nextExpectedSeq (already processed/duplicates)
 
 	return nil
 }
