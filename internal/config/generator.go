@@ -182,11 +182,14 @@ func (g *ConfigGenerator) generateClientConfigFromOptions(cfg *ClientConfig, opt
 		if parsed.RemoteHost == "" && parsed.ListenPort == parsed.RemotePort {
 			portForwards = append(portForwards, parsed.ListenPort)
 		} else {
-			portForwards = append(portForwards, map[string]interface{}{
+			pfMap := map[string]interface{}{
 				"listen_port": parsed.ListenPort,
-				"remote_host": parsed.RemoteHost,
 				"remote_port": parsed.RemotePort,
-			})
+			}
+			if parsed.RemoteHost != "" {
+				pfMap["remote_host"] = parsed.RemoteHost
+			}
+			portForwards = append(portForwards, pfMap)
 		}
 	}
 	cfg.PortForwards = portForwards

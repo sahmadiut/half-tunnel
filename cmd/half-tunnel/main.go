@@ -162,8 +162,13 @@ Port forward formats:
 		os.Exit(1)
 	}
 	
-	// Determine if we should run interactively
-	hasOptions := *upstreamPort > 0 || *downstreamPort > 0 || *upstreamURL != "" || *downstreamURL != "" || len(*portForwards) > 0 || *socks5Port > 0
+	// Determine if we should run interactively (when no CLI options are provided)
+	hasNonInteractiveOptions := *upstreamPort > 0 ||
+		*downstreamPort > 0 ||
+		*upstreamURL != "" ||
+		*downstreamURL != "" ||
+		len(*portForwards) > 0 ||
+		*socks5Port > 0
 	
 	opts := config.GenerateOptions{
 		OutputPath:     *output,
@@ -179,7 +184,7 @@ Port forward formats:
 	}
 	
 	var generator *config.ConfigGenerator
-	if hasOptions {
+	if hasNonInteractiveOptions {
 		generator = config.NewNonInteractiveGenerator()
 	} else {
 		generator = config.NewInteractiveGenerator()
