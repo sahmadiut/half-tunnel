@@ -87,8 +87,10 @@ func main() {
 	serverConfig := &server.Config{
 		UpstreamAddr:    upstreamAddr,
 		UpstreamPath:    cfg.Server.Upstream.Path,
+		UpstreamTLS:     server.TLSConfig{Enabled: cfg.Server.Upstream.TLS.Enabled, CertFile: cfg.Server.Upstream.TLS.CertFile, KeyFile: cfg.Server.Upstream.TLS.KeyFile},
 		DownstreamAddr:  downstreamAddr,
 		DownstreamPath:  cfg.Server.Downstream.Path,
+		DownstreamTLS:   server.TLSConfig{Enabled: cfg.Server.Downstream.TLS.Enabled, CertFile: cfg.Server.Downstream.TLS.CertFile, KeyFile: cfg.Server.Downstream.TLS.KeyFile},
 		SessionTimeout:  cfg.Tunnel.Session.Timeout,
 		MaxSessions:     cfg.Tunnel.Session.MaxSessions,
 		ReadBufferSize:  cfg.Tunnel.Connection.ReadBufferSize,

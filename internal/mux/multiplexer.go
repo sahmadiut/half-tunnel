@@ -187,11 +187,11 @@ var ErrBufferFull = errors.New("stream buffer is full")
 // StreamBuffer provides a simple buffer for stream data with bounded memory.
 // It tracks out-of-order segments and reassembles them in sequence order.
 type StreamBuffer struct {
-	data           []byte
-	maxSize        int
-	mu             sync.Mutex
-	segments       map[uint32][]byte // SeqNum -> data for out-of-order handling
-	nextExpectedSeq uint32           // Next expected sequence number
+	data            []byte
+	maxSize         int
+	mu              sync.Mutex
+	segments        map[uint32][]byte // SeqNum -> data for out-of-order handling
+	nextExpectedSeq uint32            // Next expected sequence number
 }
 
 // NewStreamBuffer creates a new stream buffer with the given max size.
@@ -227,13 +227,13 @@ func (b *StreamBuffer) Write(seqNum uint32, data []byte) error {
 
 		// Flush any consecutive segments that are now in order
 		for {
-			if segment, ok := b.segments[b.nextExpectedSeq]; ok {
-				b.data = append(b.data, segment...)
-				delete(b.segments, b.nextExpectedSeq)
-				b.nextExpectedSeq++
-			} else {
+			segment, ok := b.segments[b.nextExpectedSeq]
+			if !ok {
 				break
 			}
+			b.data = append(b.data, segment...)
+			delete(b.segments, b.nextExpectedSeq)
+			b.nextExpectedSeq++
 		}
 	} else if seqNum > b.nextExpectedSeq {
 		// Out-of-order packet: store in segments map for later reassembly

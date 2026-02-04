@@ -27,10 +27,14 @@ type Config struct {
 	UpstreamAddr string
 	// UpstreamPath is the WebSocket path for upstream connections
 	UpstreamPath string
+	// UpstreamTLS holds TLS settings for upstream server
+	UpstreamTLS TLSConfig
 	// DownstreamAddr is the address to listen for downstream connections (Domain B)
 	DownstreamAddr string
 	// DownstreamPath is the WebSocket path for downstream connections
 	DownstreamPath string
+	// DownstreamTLS holds TLS settings for downstream server
+	DownstreamTLS TLSConfig
 	// Session settings
 	SessionTimeout time.Duration
 	MaxSessions    int
@@ -41,6 +45,13 @@ type Config struct {
 	DialTimeout     time.Duration
 }
 
+// TLSConfig holds TLS certificate settings.
+type TLSConfig struct {
+	Enabled  bool
+	CertFile string
+	KeyFile  string
+}
+
 // DefaultConfig returns default server configuration.
 func DefaultConfig() *Config {
 	return &Config{
@@ -48,6 +59,8 @@ func DefaultConfig() *Config {
 		UpstreamPath:    "/upstream",
 		DownstreamAddr:  ":8081",
 		DownstreamPath:  "/downstream",
+		UpstreamTLS:     TLSConfig{},
+		DownstreamTLS:   TLSConfig{},
 		SessionTimeout:  5 * time.Minute,
 		MaxSessions:     1000,
 		ReadBufferSize:  32768,
@@ -124,16 +137,17 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	transportConfig := &transport.ServerConfig{
-		ReadBufferSize:  s.config.ReadBufferSize,
-		WriteBufferSize: s.config.WriteBufferSize,
-		MaxMessageSize:  int64(s.config.MaxMessageSize),
+		ReadBufferSize:   s.config.ReadBufferSize,
+		WriteBufferSize:  s.config.WriteBufferSize,
+		MaxMessageSize:   int64(s.config.MaxMessageSize),
+		HandshakeTimeout: s.config.DialTimeout,
 	}
 
 	// Create upstream handler
-	s.upstreamHandler = transport.NewServerHandler(transportConfig)
+	s.upstreamHandler = transport.NewServerHandler(transportConfig, s.log.WithStr("direction", "upstream"))
 
 	// Create downstream handler
-	s.downstreamHandler = transport.NewServerHandler(transportConfig)
+	s.downstreamHandler = transport.NewServerHandler(transportConfig, s.log.WithStr("direction", "downstream"))
 
 	// Set up upstream HTTP server
 	upstreamMux := http.NewServeMux()
@@ -156,6 +170,12 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		defer s.wg.Done()
 		s.log.Info().Str("addr", s.config.UpstreamAddr).Msg("Starting upstream server")
+		if s.config.UpstreamTLS.Enabled {
+			if err := s.upstreamServer.ListenAndServeTLS(s.config.UpstreamTLS.CertFile, s.config.UpstreamTLS.KeyFile); err != nil && err != http.ErrServerClosed {
+				s.log.Error().Err(err).Msg("Upstream server error")
+			}
+			return
+		}
 		if err := s.upstreamServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.log.Error().Err(err).Msg("Upstream server error")
 		}
@@ -166,6 +186,12 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		defer s.wg.Done()
 		s.log.Info().Str("addr", s.config.DownstreamAddr).Msg("Starting downstream server")
+		if s.config.DownstreamTLS.Enabled {
+			if err := s.downstreamServer.ListenAndServeTLS(s.config.DownstreamTLS.CertFile, s.config.DownstreamTLS.KeyFile); err != nil && err != http.ErrServerClosed {
+				s.log.Error().Err(err).Msg("Downstream server error")
+			}
+			return
+		}
 		if err := s.downstreamServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.log.Error().Err(err).Msg("Downstream server error")
 		}
@@ -285,6 +311,9 @@ func (s *Server) handleDownstreamConnections(ctx context.Context) {
 // handleUpstreamConnection handles packets from an upstream connection.
 func (s *Server) handleUpstreamConnection(ctx context.Context, conn *transport.Connection) {
 	defer conn.Close()
+	s.log.Info().
+		Str("remote_addr", conn.RemoteAddr()).
+		Msg("Upstream connection established")
 
 	for {
 		select {
@@ -318,6 +347,9 @@ func (s *Server) registerDownstreamConnection(ctx context.Context, conn *transpo
 	// Read the first packet to get the session ID
 	data, err := conn.Read()
 	if err != nil {
+		s.log.Debug().Err(err).
+			Str("remote_addr", conn.RemoteAddr()).
+			Msg("Failed to read initial downstream packet")
 		conn.Close()
 		return
 	}
@@ -336,6 +368,7 @@ func (s *Server) registerDownstreamConnection(ctx context.Context, conn *transpo
 
 	s.log.Info().
 		Str("session_id", pkt.SessionID.String()).
+		Str("remote_addr", conn.RemoteAddr()).
 		Msg("Client downstream connected")
 
 	// Keep reading (for keep-alive, etc.)
@@ -405,6 +438,12 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 		Bool("fin", pkt.IsFin()).
 		Msg("Received upstream packet")
 
+	if pkt.IsHandshake() && pkt.StreamID == 0 {
+		s.log.Info().
+			Str("session_id", pkt.SessionID.String()).
+			Msg("Client upstream handshake received")
+	}
+
 	if pkt.IsKeepAlive() {
 		if !pkt.IsAck() {
 			_ = s.sendDownstreamPacket(pkt.SessionID, pkt.StreamID, protocol.FlagKeepAlive|protocol.FlagAck, nil)
@@ -414,6 +453,10 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 
 	// Handle handshake for new streams (contains destination info)
 	if pkt.IsHandshake() && pkt.IsData() && len(pkt.Payload) > 0 {
+		s.log.Info().
+			Str("session_id", pkt.SessionID.String()).
+			Uint32("stream_id", pkt.StreamID).
+			Msg("Received upstream handshake")
 		destHost, destPort, err := parseConnectPayload(pkt.Payload)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Error parsing connect payload")
