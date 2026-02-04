@@ -97,3 +97,22 @@ func TestConfigWithResolveIP(t *testing.T) {
 		t.Errorf("IPVersion = %s, want 4", config.IPVersion)
 	}
 }
+
+func TestWriteQueueSize(t *testing.T) {
+	// Verify WriteQueueSize is reduced to 256 to prevent memory pressure
+	if WriteQueueSize != 256 {
+		t.Errorf("WriteQueueSize = %d, want 256", WriteQueueSize)
+	}
+}
+
+func TestDefaultConfigHasKeepAliveSettings(t *testing.T) {
+	config := DefaultConfig("ws://example.com:8080/ws")
+
+	// Verify PingInterval is configured for application-level keep-alive
+	if config.PingInterval != 30*time.Second {
+		t.Errorf("PingInterval = %v, want 30s", config.PingInterval)
+	}
+	if config.PongTimeout != 10*time.Second {
+		t.Errorf("PongTimeout = %v, want 10s", config.PongTimeout)
+	}
+}
