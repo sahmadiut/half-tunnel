@@ -208,3 +208,30 @@ func main() {
 		log.Error().Err(err).Msg("Error stopping client")
 	}
 }
+
+// loadTLSConfig creates a TLS configuration based on the provided parameters.
+// If enabled is false, it returns nil. Otherwise, it creates a *tls.Config
+// with the specified InsecureSkipVerify setting and optionally loads a custom CA.
+func loadTLSConfig(enabled bool, skipVerify bool, caFile string) (*tls.Config, error) {
+	if !enabled {
+		return nil, nil
+	}
+
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: skipVerify,
+	}
+
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA file: %w", err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
+}
