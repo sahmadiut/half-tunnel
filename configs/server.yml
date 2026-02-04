@@ -71,9 +71,11 @@ tunnel:
     # Port range for remote tunnels
     port_start: 9000
     port_end: 9999
-    # TLS certificate for chisel server (optional, enables HTTPS)
+    # TLS certificate for chisel server (optional)
+    # Note: Both tls_cert and tls_key must be provided together to enable HTTPS
     tls_cert: ""
-    # TLS key for chisel server (optional, enables HTTPS)
+    # TLS key for chisel server (optional)
+    # Note: Both tls_cert and tls_key must be provided together to enable HTTPS
     tls_key: ""
     # Keepalive interval for chisel connections
     keepalive: "25s"

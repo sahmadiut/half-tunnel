@@ -27,8 +27,10 @@ type ChiselConfig struct {
 	// Port is the starting port for Chisel tunnels
 	Port int
 	// TLSCert is the path to TLS certificate file (for server mode)
+	// For client mode, this is used as the CA certificate for server verification
 	TLSCert string
 	// TLSKey is the path to TLS key file (for server mode)
+	// Note: Both TLSCert and TLSKey must be provided together to enable HTTPS
 	TLSKey string
 	// KeepAlive interval for connections
 	KeepAlive time.Duration
