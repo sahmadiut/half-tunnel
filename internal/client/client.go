@@ -642,6 +642,7 @@ func (c *Client) handleConnect(ctx context.Context, req *socks5.ConnectRequest) 
 // forwardClientToUpstream forwards data from the client to upstream.
 func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 	buf := make([]byte, constants.DefaultBufferSize)
+	const readTimeout = 5 * time.Minute
 
 	for {
 		select {
@@ -657,8 +658,10 @@ func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 		}
 
 		// Set a read deadline to prevent stuck goroutines
-		if tcpConn, ok := sc.conn.(*net.TCPConn); ok {
-			if err := tcpConn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
+		// This is called at the start of each iteration, so after a timeout
+		// and continue, the deadline is refreshed before the next read
+		if conn, ok := sc.conn.(interface{ SetReadDeadline(time.Time) error }); ok {
+			if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 				c.log.Debug().Err(err).
 					Uint32("stream_id", sc.streamID).
 					Msg("Failed to set read deadline")
@@ -675,7 +678,9 @@ func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 					_, stillActive := c.streamConns[sc.streamID]
 					c.streamConnsMu.RUnlock()
 					if stillActive {
-						continue // Continue reading if stream is still active
+						// Stream is still active, continue reading
+						// The deadline will be refreshed at the top of the next iteration
+						continue
 					}
 				}
 				c.log.Debug().Err(err).

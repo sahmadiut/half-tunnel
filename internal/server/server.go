@@ -587,6 +587,17 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 	buf := make([]byte, constants.DefaultBufferSize)
 	key := natKey{SessionID: sessionID, StreamID: streamID}
 
+	// Get the NAT entry once at the start - the pointer is stable once created
+	s.natTableMu.RLock()
+	entry, entryExists := s.natTable[key]
+	s.natTableMu.RUnlock()
+
+	// Calculate read deadline once (2x session timeout, minimum 5 minutes)
+	readDeadline := 2 * s.config.SessionTimeout
+	if readDeadline < 5*time.Minute {
+		readDeadline = 5 * time.Minute
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -596,11 +607,7 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 		default:
 		}
 
-		// Set read deadline to prevent stuck goroutines (2x session timeout)
-		readDeadline := 2 * s.config.SessionTimeout
-		if readDeadline < 5*time.Minute {
-			readDeadline = 5 * time.Minute
-		}
+		// Set read deadline to prevent stuck goroutines
 		if err := destConn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
 			s.log.Debug().Err(err).
 				Uint32("stream_id", streamID).
@@ -620,11 +627,8 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 		}
 
 		if n > 0 {
-			// Update last activity timestamp for NAT entry
-			s.natTableMu.RLock()
-			entry, exists := s.natTable[key]
-			s.natTableMu.RUnlock()
-			if exists {
+			// Update last activity timestamp for NAT entry (using cached pointer)
+			if entryExists && entry != nil {
 				atomic.StoreInt64(&entry.lastActivity, time.Now().Unix())
 			}
 
