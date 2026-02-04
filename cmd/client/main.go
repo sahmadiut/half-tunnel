@@ -136,6 +136,19 @@ func main() {
 		WriteBufferSize:  cfg.Tunnel.Connection.WriteBufferSize,
 	}
 
+	// Set Chisel configuration if enabled
+	if cfg.Tunnel.Chisel.Enabled {
+		clientConfig.ChiselConfig = &client.ChiselClientConfig{
+			Enabled:     true,
+			ServerURL:   cfg.Tunnel.Chisel.ServerURL,
+			Fingerprint: cfg.Tunnel.Chisel.Fingerprint,
+			PortStart:   cfg.Tunnel.Chisel.PortStart,
+			PortEnd:     cfg.Tunnel.Chisel.PortEnd,
+			KeepAlive:   cfg.Tunnel.Chisel.KeepAlive,
+			TLSCert:     cfg.Tunnel.Chisel.TLSCert,
+		}
+	}
+
 	// Set SOCKS5 authentication if enabled
 	if cfg.SOCKS5.Auth.Enabled {
 		clientConfig.SOCKS5Username = cfg.SOCKS5.Auth.Username
