@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -33,6 +35,12 @@ type Config struct {
 	HandshakeTimeout time.Duration
 	ReadBufferSize   int
 	WriteBufferSize  int
+	// ResolveIP allows manual IP specification instead of DNS lookup
+	ResolveIP string
+	// IPVersion forces IPv4 ("4") or IPv6 ("6"), empty for auto
+	IPVersion string
+	// TCPNoDelay disables Nagle's algorithm for lower latency
+	TCPNoDelay bool
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -47,6 +55,7 @@ func DefaultConfig(url string) *Config {
 		HandshakeTimeout: 10 * time.Second,
 		ReadBufferSize:   constants.DefaultBufferSize,
 		WriteBufferSize:  constants.DefaultBufferSize,
+		TCPNoDelay:       true,
 	}
 }
 
@@ -59,17 +68,90 @@ type Connection struct {
 	closedCh chan struct{}
 }
 
+// createDialer creates a net.Dialer configured based on Config settings.
+func createDialer(config *Config) *net.Dialer {
+	dialer := &net.Dialer{
+		Timeout: config.HandshakeTimeout,
+	}
+
+	// Configure TCP keep-alive
+	dialer.KeepAlive = 30 * time.Second
+
+	return dialer
+}
+
+// getNetworkType returns the network type based on IP version setting.
+func getNetworkType(ipVersion string) string {
+	switch ipVersion {
+	case "4":
+		return "tcp4"
+	case "6":
+		return "tcp6"
+	default:
+		return "tcp"
+	}
+}
+
+// createCustomDialContext creates a dial context function that uses ResolveIP if set.
+func createCustomDialContext(config *Config) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := createDialer(config)
+
+		// Determine network type
+		netType := network
+		if config.IPVersion != "" {
+			netType = getNetworkType(config.IPVersion)
+		}
+
+		// If ResolveIP is set, use it instead of DNS lookup
+		if config.ResolveIP != "" {
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			addr = net.JoinHostPort(config.ResolveIP, port)
+		}
+
+		conn, err := dialer.DialContext(ctx, netType, addr)
+		if err != nil {
+			return nil, err
+		}
+
+		// Apply TCP options
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			if config.TCPNoDelay {
+				_ = tcpConn.SetNoDelay(true)
+			}
+		}
+
+		return conn, nil
+	}
+}
+
 // Dial creates a new WebSocket connection.
 func Dial(ctx context.Context, config *Config) (*Connection, error) {
 	dialer := websocket.Dialer{
 		TLSClientConfig:  config.TLSConfig,
 		HandshakeTimeout: config.HandshakeTimeout,
+		NetDialContext:   createCustomDialContext(config),
 	}
 	if config.ReadBufferSize > 0 {
 		dialer.ReadBufferSize = config.ReadBufferSize
 	}
 	if config.WriteBufferSize > 0 {
 		dialer.WriteBufferSize = config.WriteBufferSize
+	}
+
+	// For TLS connections with ResolveIP, we need to ensure the TLS config
+	// has the correct ServerName set based on the original URL
+	if config.ResolveIP != "" && config.TLSConfig != nil {
+		parsedURL, err := url.Parse(config.URL)
+		if err == nil && config.TLSConfig.ServerName == "" {
+			// Clone the TLS config and set ServerName from the URL host
+			tlsConfig := config.TLSConfig.Clone()
+			tlsConfig.ServerName = parsedURL.Hostname()
+			dialer.TLSClientConfig = tlsConfig
+		}
 	}
 
 	conn, _, err := dialer.DialContext(ctx, config.URL, http.Header{})

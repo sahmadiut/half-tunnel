@@ -64,6 +64,14 @@ type Config struct {
 	DownstreamTLS    *tls.Config
 	ReadBufferSize   int
 	WriteBufferSize  int
+	// Manual IP resolution for upstream (upload) - bypasses DNS lookup
+	UpstreamResolveIP string
+	// Manual IP resolution for downstream (download) - bypasses DNS lookup
+	DownstreamResolveIP string
+	// IPVersion forces IPv4 ("4") or IPv6 ("6"), empty for auto
+	IPVersion string
+	// TCPNoDelay disables Nagle's algorithm for lower latency
+	TCPNoDelay bool
 	// Data flow monitoring settings
 	DataFlowMonitor *DataFlowMonitorConfig
 }
@@ -85,6 +93,7 @@ func DefaultConfig() *Config {
 		HandshakeTimeout: 10 * time.Second,
 		ReadBufferSize:   constants.DefaultBufferSize,
 		WriteBufferSize:  constants.DefaultBufferSize,
+		TCPNoDelay:       true,
 		DataFlowMonitor:  DefaultDataFlowMonitorConfig(),
 	}
 }
@@ -685,6 +694,9 @@ func (c *Client) connect(ctx context.Context) error {
 	upstreamConfig.TLSConfig = c.config.UpstreamTLS
 	upstreamConfig.ReadBufferSize = c.config.ReadBufferSize
 	upstreamConfig.WriteBufferSize = c.config.WriteBufferSize
+	upstreamConfig.ResolveIP = c.config.UpstreamResolveIP
+	upstreamConfig.IPVersion = c.config.IPVersion
+	upstreamConfig.TCPNoDelay = c.config.TCPNoDelay
 
 	downstreamConfig := transport.DefaultConfig(c.config.DownstreamURL)
 	downstreamConfig.HandshakeTimeout = c.config.HandshakeTimeout
@@ -693,6 +705,9 @@ func (c *Client) connect(ctx context.Context) error {
 	downstreamConfig.TLSConfig = c.config.DownstreamTLS
 	downstreamConfig.ReadBufferSize = c.config.ReadBufferSize
 	downstreamConfig.WriteBufferSize = c.config.WriteBufferSize
+	downstreamConfig.ResolveIP = c.config.DownstreamResolveIP
+	downstreamConfig.IPVersion = c.config.IPVersion
+	downstreamConfig.TCPNoDelay = c.config.TCPNoDelay
 
 	upstreamCtx, upstreamCancel := c.dialContext(ctx)
 	defer upstreamCancel()
@@ -701,6 +716,7 @@ func (c *Client) connect(ctx context.Context) error {
 	if err != nil {
 		c.log.Error().Err(err).
 			Str("url", c.config.UpstreamURL).
+			Str("resolve_ip", c.config.UpstreamResolveIP).
 			Msg("Upstream dial failed")
 		return fmt.Errorf("failed to connect to upstream: %w", err)
 	}
@@ -712,6 +728,7 @@ func (c *Client) connect(ctx context.Context) error {
 	if err != nil {
 		c.log.Error().Err(err).
 			Str("url", c.config.DownstreamURL).
+			Str("resolve_ip", c.config.DownstreamResolveIP).
 			Msg("Downstream dial failed")
 		upstream.Close()
 		return fmt.Errorf("failed to connect to downstream: %w", err)
@@ -726,11 +743,13 @@ func (c *Client) connect(ctx context.Context) error {
 	c.log.Info().
 		Str("url", c.config.UpstreamURL).
 		Str("remote_addr", upstream.RemoteAddr()).
+		Str("resolve_ip", c.config.UpstreamResolveIP).
 		Msg("Connected to upstream")
 
 	c.log.Info().
 		Str("url", c.config.DownstreamURL).
 		Str("remote_addr", downstream.RemoteAddr()).
+		Str("resolve_ip", c.config.DownstreamResolveIP).
 		Msg("Connected to downstream")
 
 	if err := c.sendHandshake(); err != nil {

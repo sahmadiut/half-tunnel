@@ -67,6 +67,8 @@ type ServerConnectionConfig struct {
 	WriteBufferSize   int           `mapstructure:"write_buffer_size"`
 	KeepaliveInterval time.Duration `mapstructure:"keepalive_interval"`
 	MaxMessageSize    int           `mapstructure:"max_message_size"`
+	BufferMode        string        `mapstructure:"buffer_mode"` // small, default, large, max
+	TCPNoDelay        bool          `mapstructure:"tcp_nodelay"` // Disable Nagle's algorithm
 }
 
 // EncryptionConfig holds encryption settings.
@@ -143,6 +145,8 @@ func DefaultServerConfig() *ServerConfig {
 				WriteBufferSize:   32768,
 				KeepaliveInterval: 30 * time.Second,
 				MaxMessageSize:    65536,
+				BufferMode:        "default",
+				TCPNoDelay:        true,
 			},
 			Encryption: EncryptionConfig{
 				Enabled:   true,
@@ -241,6 +245,8 @@ func setServerDefaults(v *viper.Viper) {
 	v.SetDefault("tunnel.connection.write_buffer_size", defaults.Tunnel.Connection.WriteBufferSize)
 	v.SetDefault("tunnel.connection.keepalive_interval", defaults.Tunnel.Connection.KeepaliveInterval)
 	v.SetDefault("tunnel.connection.max_message_size", defaults.Tunnel.Connection.MaxMessageSize)
+	v.SetDefault("tunnel.connection.buffer_mode", defaults.Tunnel.Connection.BufferMode)
+	v.SetDefault("tunnel.connection.tcp_nodelay", defaults.Tunnel.Connection.TCPNoDelay)
 	v.SetDefault("tunnel.encryption.enabled", defaults.Tunnel.Encryption.Enabled)
 	v.SetDefault("tunnel.encryption.algorithm", defaults.Tunnel.Encryption.Algorithm)
 

@@ -73,14 +73,13 @@ func (l *Logger) WithBytes(key string, b int64) *Logger
 
 ---
 
-## Phase 2: Data Transfer Speed Optimization
+## Phase 2: Data Transfer Speed Optimization ✅ (Complete)
 
 ### Objective
 Maximize data transfer throughput.
 
-### 2.1 Buffer Size Optimization
-Current default: 32KB  
-Recommended: Tunable based on use case
+### 2.1 Buffer Size Optimization ✅
+Implemented tunable buffer sizes based on use case:
 
 ```go
 // internal/constants/constants.go
@@ -97,11 +96,15 @@ const (
     // High throughput mode
     MaxBufferSize = 131072     // 128KB
 )
+
+// BufferMode type for configuration
+type BufferMode string // "small", "default", "large", "max"
 ```
 
-### 2.2 Connection Pooling
+### 2.2 Connection Pooling ✅
+Implemented in `internal/transport/pool.go`:
+
 ```go
-// internal/transport/pool.go
 type ConnectionPool struct {
     maxSize     int
     idleTimeout time.Duration
@@ -113,34 +116,48 @@ func (p *ConnectionPool) Get(ctx context.Context) (*Connection, error)
 func (p *ConnectionPool) Put(conn *Connection)
 ```
 
-### 2.3 Zero-Copy Data Transfer
+### 2.3 Zero-Copy Data Transfer ✅
+Implemented BufferPool using `sync.Pool` for buffer reuse:
+
 ```go
-// Use io.Copy with optimized buffers
-// Avoid unnecessary allocations in hot paths
-func (s *Server) forwardDestToDownstream(...) {
-    // Use sync.Pool for buffer reuse
-    buf := bufferPool.Get().([]byte)
-    defer bufferPool.Put(buf)
-    
-    // Direct copy without intermediate buffers
-    io.CopyBuffer(dst, src, buf)
+type BufferPool struct {
+    pool sync.Pool
+    size int
 }
+
+// Global buffer pools for different modes
+var DefaultBufferPool = NewBufferPool(constants.DefaultBufferSize)
+var SmallBufferPool = NewBufferPool(constants.SmallBufferSize)
+var LargeBufferPool = NewBufferPool(constants.LargeBufferSize)
+var MaxBufferPool = NewBufferPool(constants.MaxBufferSize)
 ```
 
-### 2.4 Parallel Stream Processing
-- Process multiple streams concurrently
-- Use worker pool pattern for destination connections
-- Limit concurrent connections to prevent resource exhaustion
+### 2.4 Manual IP Resolution ✅
+Added ability to manually specify resolve IP for uploads and downloads separately:
 
-### 2.5 TCP Tuning Options
 ```yaml
-# configs/server.yml
-performance:
-  read_buffer_size: 65536      # Per-connection read buffer
-  write_buffer_size: 65536     # Per-connection write buffer
-  max_message_size: 131072     # Maximum WebSocket message
-  tcp_nodelay: true            # Disable Nagle's algorithm
-  tcp_keepalive: 30s           # TCP keepalive interval
+# configs/client.yml
+client:
+  upstream:
+    url: "wss://domain-a.example.com:8443/ws/upstream"
+    resolve_ip: "1.2.3.4"  # Manual IP for upload connection
+  downstream:
+    url: "wss://domain-b.example.com:8444/ws/downstream"
+    resolve_ip: "5.6.7.8"  # Manual IP for download connection
+```
+
+### 2.5 TCP Tuning Options ✅
+Implemented configurable TCP options:
+
+```yaml
+# configs/client.yml and server.yml
+tunnel:
+  connection:
+    read_buffer_size: 65536      # Per-connection read buffer
+    write_buffer_size: 65536     # Per-connection write buffer
+    buffer_mode: "default"       # small, default, large, max
+    tcp_nodelay: true            # Disable Nagle's algorithm
+    ip_version: ""               # "4" for IPv4, "6" for IPv6, "" for auto
 ```
 
 ---
