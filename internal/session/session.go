@@ -45,6 +45,17 @@ type Stream struct {
 	mu        sync.RWMutex
 }
 
+// StreamState holds the state of a stream for persistence and resumption.
+// This is used for stream recovery after reconnection.
+type StreamState struct {
+	ID           uint32
+	State        State
+	BytesSent    int64
+	BytesRecv    int64
+	LastActivity time.Time
+	Checksum     uint32 // For data integrity verification
+}
+
 // NewStream creates a new stream with the given ID.
 func NewStream(id uint32) *Stream {
 	now := time.Now()
@@ -173,4 +184,37 @@ func (s *Session) Touch() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.UpdatedAt = time.Now()
+}
+
+// ResumeStream resumes a stream with the given state after reconnection.
+// This allows stream recovery after connection failures.
+func (s *Session) ResumeStream(id uint32, state StreamState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stream := NewStream(id)
+	stream.State = state.State
+	s.streams[id] = stream
+	s.UpdatedAt = time.Now()
+	return nil
+}
+
+// GetStreamState returns the current state of a stream for persistence.
+func (s *Session) GetStreamState(streamID uint32) (StreamState, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stream, exists := s.streams[streamID]
+	if !exists {
+		return StreamState{}, false
+	}
+
+	stream.mu.RLock()
+	defer stream.mu.RUnlock()
+
+	return StreamState{
+		ID:           stream.ID,
+		State:        stream.State,
+		LastActivity: stream.UpdatedAt,
+	}, true
 }

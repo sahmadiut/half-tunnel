@@ -272,3 +272,31 @@ func (p *Packet) IsReconnect() bool {
 func (p *Packet) HasHMAC() bool {
 	return p.Flags&FlagHMAC != 0
 }
+
+// CalculateChecksum calculates a CRC32 checksum of the packet's payload.
+// This is used for data integrity verification.
+func (p *Packet) CalculateChecksum() uint32 {
+	if len(p.Payload) == 0 {
+		return 0
+	}
+
+	// Simple CRC32-like checksum (IEEE polynomial)
+	var checksum uint32 = 0xFFFFFFFF
+	for _, b := range p.Payload {
+		checksum ^= uint32(b)
+		for i := 0; i < 8; i++ {
+			if checksum&1 != 0 {
+				checksum = (checksum >> 1) ^ 0xEDB88320
+			} else {
+				checksum >>= 1
+			}
+		}
+	}
+	return ^checksum
+}
+
+// VerifyChecksum verifies the packet's payload against a given checksum.
+// Returns true if the checksum matches.
+func (p *Packet) VerifyChecksum(expected uint32) bool {
+	return p.CalculateChecksum() == expected
+}

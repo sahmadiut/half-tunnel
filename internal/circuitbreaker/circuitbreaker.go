@@ -266,3 +266,87 @@ func (cb *CircuitBreaker) Stats() Stats {
 		OpenedAt:         cb.openedAt,
 	}
 }
+
+// DestinationBreaker manages per-destination circuit breakers.
+// It allows tracking circuit breaker state for individual destinations
+// to prevent a single failing destination from affecting others.
+type DestinationBreaker struct {
+	breakers map[string]*CircuitBreaker
+	config   *Config
+	mu       sync.RWMutex
+}
+
+// NewDestinationBreaker creates a new per-destination circuit breaker manager.
+func NewDestinationBreaker(config *Config) *DestinationBreaker {
+	if config == nil {
+		config = DefaultConfig()
+	}
+	return &DestinationBreaker{
+		breakers: make(map[string]*CircuitBreaker),
+		config:   config,
+	}
+}
+
+// Get returns the circuit breaker for a destination, creating it if necessary.
+func (db *DestinationBreaker) Get(dest string) *CircuitBreaker {
+	db.mu.RLock()
+	cb, exists := db.breakers[dest]
+	db.mu.RUnlock()
+
+	if exists {
+		return cb
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if cb, exists = db.breakers[dest]; exists {
+		return cb
+	}
+
+	cb = New(db.config)
+	db.breakers[dest] = cb
+	return cb
+}
+
+// Allow returns true if a request to the destination should be allowed.
+func (db *DestinationBreaker) Allow(dest string) bool {
+	return db.Get(dest).Allow()
+}
+
+// RecordSuccess records a successful request to the destination.
+func (db *DestinationBreaker) RecordSuccess(dest string) {
+	db.Get(dest).RecordSuccess()
+}
+
+// RecordFailure records a failed request to the destination.
+func (db *DestinationBreaker) RecordFailure(dest string) {
+	db.Get(dest).RecordFailure()
+}
+
+// Remove removes the circuit breaker for a destination.
+func (db *DestinationBreaker) Remove(dest string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(db.breakers, dest)
+}
+
+// Reset resets all destination circuit breakers.
+func (db *DestinationBreaker) Reset() {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.breakers = make(map[string]*CircuitBreaker)
+}
+
+// DestinationStats returns statistics for all destinations.
+func (db *DestinationBreaker) DestinationStats() map[string]Stats {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	result := make(map[string]Stats, len(db.breakers))
+	for dest, cb := range db.breakers {
+		result[dest] = cb.Stats()
+	}
+	return result
+}

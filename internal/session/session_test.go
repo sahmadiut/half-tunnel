@@ -175,3 +175,91 @@ func TestStateString(t *testing.T) {
 		}
 	}
 }
+
+// Tests for Phase 3: Stream State Persistence
+
+func TestSessionGetStreamState(t *testing.T) {
+	s := New()
+
+	// Create a stream and modify its state
+	stream := s.GetStream(1)
+	stream.SetState(StateActive)
+
+	// Get the stream state
+	state, ok := s.GetStreamState(1)
+	if !ok {
+		t.Fatal("stream should exist")
+	}
+
+	if state.ID != 1 {
+		t.Errorf("expected stream ID 1, got %d", state.ID)
+	}
+	if state.State != StateActive {
+		t.Errorf("expected StateActive, got %v", state.State)
+	}
+}
+
+func TestGetStreamStateNotFound(t *testing.T) {
+	s := New()
+
+	_, ok := s.GetStreamState(999)
+	if ok {
+		t.Error("non-existent stream should return false")
+	}
+}
+
+func TestResumeStream(t *testing.T) {
+	s := New()
+
+	// Resume a stream
+	state := StreamState{
+		ID:           42,
+		State:        StateActive,
+		BytesSent:    1000,
+		BytesRecv:    2000,
+		LastActivity: time.Now(),
+		Checksum:     0x12345678,
+	}
+
+	err := s.ResumeStream(42, state)
+	if err != nil {
+		t.Fatalf("ResumeStream failed: %v", err)
+	}
+
+	// Verify stream was created
+	stream, exists := s.GetExistingStream(42)
+	if !exists {
+		t.Fatal("stream should exist after resume")
+	}
+
+	if stream.ID != 42 {
+		t.Errorf("expected stream ID 42, got %d", stream.ID)
+	}
+	if stream.GetState() != StateActive {
+		t.Errorf("expected StateActive, got %v", stream.GetState())
+	}
+}
+
+func TestStreamStateStruct(t *testing.T) {
+	state := StreamState{
+		ID:           1,
+		State:        StateActive,
+		BytesSent:    100,
+		BytesRecv:    200,
+		LastActivity: time.Now(),
+		Checksum:     42,
+	}
+
+	if state.ID != 1 {
+		t.Errorf("expected ID 1, got %d", state.ID)
+	}
+	if state.BytesSent != 100 {
+		t.Errorf("expected BytesSent 100, got %d", state.BytesSent)
+	}
+	if state.BytesRecv != 200 {
+		t.Errorf("expected BytesRecv 200, got %d", state.BytesRecv)
+	}
+	if state.Checksum != 42 {
+		t.Errorf("expected Checksum 42, got %d", state.Checksum)
+	}
+}

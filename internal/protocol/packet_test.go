@@ -324,3 +324,76 @@ func BenchmarkUnmarshal(b *testing.B) {
 		_, _ = Unmarshal(data)
 	}
 }
+
+// Tests for checksum functionality (Phase 3)
+
+func TestCalculateChecksum(t *testing.T) {
+	sessionID := uuid.New()
+
+	// Test with non-empty payload
+	pkt, err := NewPacket(sessionID, 1, FlagData, []byte("hello world"))
+	if err != nil {
+		t.Fatalf("NewPacket failed: %v", err)
+	}
+
+	checksum := pkt.CalculateChecksum()
+	if checksum == 0 {
+		t.Error("checksum should not be 0 for non-empty payload")
+	}
+
+	// Same data should produce same checksum
+	checksum2 := pkt.CalculateChecksum()
+	if checksum != checksum2 {
+		t.Error("same data should produce same checksum")
+	}
+}
+
+func TestCalculateChecksumEmptyPayload(t *testing.T) {
+	sessionID := uuid.New()
+
+	pkt, err := NewPacket(sessionID, 1, FlagData, nil)
+	if err != nil {
+		t.Fatalf("NewPacket failed: %v", err)
+	}
+
+	checksum := pkt.CalculateChecksum()
+	if checksum != 0 {
+		t.Error("empty payload should have checksum 0")
+	}
+}
+
+func TestVerifyChecksum(t *testing.T) {
+	sessionID := uuid.New()
+
+	pkt, err := NewPacket(sessionID, 1, FlagData, []byte("test data"))
+	if err != nil {
+		t.Fatalf("NewPacket failed: %v", err)
+	}
+
+	// Calculate checksum
+	checksum := pkt.CalculateChecksum()
+
+	// Verify should succeed
+	if !pkt.VerifyChecksum(checksum) {
+		t.Error("VerifyChecksum should return true for correct checksum")
+	}
+
+	// Verify with wrong checksum should fail
+	if pkt.VerifyChecksum(checksum + 1) {
+		t.Error("VerifyChecksum should return false for incorrect checksum")
+	}
+}
+
+func TestChecksumDifferentPayloads(t *testing.T) {
+	sessionID := uuid.New()
+
+	pkt1, _ := NewPacket(sessionID, 1, FlagData, []byte("payload one"))
+	pkt2, _ := NewPacket(sessionID, 1, FlagData, []byte("payload two"))
+
+	checksum1 := pkt1.CalculateChecksum()
+	checksum2 := pkt2.CalculateChecksum()
+
+	if checksum1 == checksum2 {
+		t.Error("different payloads should produce different checksums")
+	}
+}
