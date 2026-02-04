@@ -40,6 +40,8 @@ type Stream struct {
 	State     State
 	SeqNum    uint32 // Next sequence number to send
 	AckNum    uint32 // Next expected sequence number
+	BytesSent int64  // Total bytes sent through this stream
+	BytesRecv int64  // Total bytes received through this stream
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	mu        sync.RWMutex
@@ -64,6 +66,8 @@ func NewStream(id uint32) *Stream {
 		State:     StateOpen,
 		SeqNum:    0,
 		AckNum:    0,
+		BytesSent: 0,
+		BytesRecv: 0,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -102,6 +106,22 @@ func (s *Stream) UpdateAckNum(ack uint32) {
 		s.AckNum = ack
 		s.UpdatedAt = time.Now()
 	}
+}
+
+// AddBytesSent adds bytes to the sent counter.
+func (s *Stream) AddBytesSent(n int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.BytesSent += n
+	s.UpdatedAt = time.Now()
+}
+
+// AddBytesRecv adds bytes to the received counter.
+func (s *Stream) AddBytesRecv(n int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.BytesRecv += n
+	s.UpdatedAt = time.Now()
 }
 
 // Session represents a client session with upstream and downstream state.
@@ -194,6 +214,8 @@ func (s *Session) ResumeStream(id uint32, state StreamState) error {
 
 	stream := NewStream(id)
 	stream.State = state.State
+	stream.BytesSent = state.BytesSent
+	stream.BytesRecv = state.BytesRecv
 	s.streams[id] = stream
 	s.UpdatedAt = time.Now()
 	return nil
@@ -215,6 +237,8 @@ func (s *Session) GetStreamState(streamID uint32) (StreamState, bool) {
 	return StreamState{
 		ID:           stream.ID,
 		State:        stream.State,
+		BytesSent:    stream.BytesSent,
+		BytesRecv:    stream.BytesRecv,
 		LastActivity: stream.UpdatedAt,
 	}, true
 }

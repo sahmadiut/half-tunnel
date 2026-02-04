@@ -157,7 +157,6 @@ func TestStartTriggersReconnectOnFailure(t *testing.T) {
 
 func TestServicesNotStartedWhenNotConnected(t *testing.T) {
 	originalDial := dialTransport
-	defer func() { dialTransport = originalDial }()
 
 	// Make dial fail immediately
 	dialTransport = func(ctx context.Context, config *transport.Config) (*transport.Connection, error) {
@@ -173,18 +172,28 @@ func TestServicesNotStartedWhenNotConnected(t *testing.T) {
 
 	client := New(config, nil)
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 
 	if err := client.Start(ctx); err != nil {
+		cancel()
+		dialTransport = originalDial
 		t.Fatalf("Start returned error: %v", err)
 	}
 
 	// Services should NOT be running when not connected
 	if client.socks5 != nil {
+		cancel()
+		_ = client.Stop()
+		dialTransport = originalDial
 		t.Error("SOCKS5 server should not be started when tunnel is not connected")
+		return
 	}
 
+	// Cleanup: stop client first, then restore dial
+	cancel()
 	_ = client.Stop()
+	// Give goroutines time to finish
+	time.Sleep(10 * time.Millisecond)
+	dialTransport = originalDial
 }
 
 func TestServicesRunningStateTracking(t *testing.T) {

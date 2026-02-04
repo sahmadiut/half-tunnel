@@ -238,6 +238,39 @@ func TestResumeStream(t *testing.T) {
 	if stream.GetState() != StateActive {
 		t.Errorf("expected StateActive, got %v", stream.GetState())
 	}
+
+	// Verify BytesSent and BytesRecv are restored
+	stream.mu.RLock()
+	if stream.BytesSent != 1000 {
+		t.Errorf("expected BytesSent 1000, got %d", stream.BytesSent)
+	}
+	if stream.BytesRecv != 2000 {
+		t.Errorf("expected BytesRecv 2000, got %d", stream.BytesRecv)
+	}
+	stream.mu.RUnlock()
+}
+
+func TestGetStreamStateWithBytes(t *testing.T) {
+	s := New()
+
+	// Create a stream and add bytes
+	stream := s.GetStream(1)
+	stream.SetState(StateActive)
+	stream.AddBytesSent(500)
+	stream.AddBytesRecv(750)
+
+	// Get the stream state
+	state, ok := s.GetStreamState(1)
+	if !ok {
+		t.Fatal("stream should exist")
+	}
+
+	if state.BytesSent != 500 {
+		t.Errorf("expected BytesSent 500, got %d", state.BytesSent)
+	}
+	if state.BytesRecv != 750 {
+		t.Errorf("expected BytesRecv 750, got %d", state.BytesRecv)
+	}
 }
 
 func TestStreamStateStruct(t *testing.T) {
