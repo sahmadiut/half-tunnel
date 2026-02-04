@@ -117,9 +117,11 @@ func createCustomDialContext(config *Config) func(ctx context.Context, network, 
 			return nil, err
 		}
 
-		// Apply TCP options
+		// Apply TCP options (best effort - failures are rare and non-critical)
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if config.TCPNoDelay {
+				// SetNoDelay error is ignored as it's a performance optimization
+				// and rarely fails. The connection is still usable if it fails.
 				_ = tcpConn.SetNoDelay(true)
 			}
 		}

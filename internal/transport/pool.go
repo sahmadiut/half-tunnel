@@ -59,8 +59,9 @@ func (p *ConnectionPool) Get(ctx context.Context) (*Connection, error) {
 	}
 	p.mu.RUnlock()
 
-	// Try to get an existing connection
-	for {
+	// Try to get an existing connection, limit iterations to avoid inefficiency
+	maxIterations := p.maxSize
+	for i := 0; i < maxIterations; i++ {
 		select {
 		case pc := <-p.connections:
 			// Check if the connection is still valid
@@ -74,6 +75,9 @@ func (p *ConnectionPool) Get(ctx context.Context) (*Connection, error) {
 			return Dial(ctx, p.config)
 		}
 	}
+
+	// All connections were stale, create a new one
+	return Dial(ctx, p.config)
 }
 
 // Put returns a connection to the pool.
