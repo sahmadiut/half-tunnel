@@ -20,6 +20,9 @@ import (
 	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
 
+// DefaultStartupWait is the default time to wait for chisel processes to start.
+const DefaultStartupWait = 2 * time.Second
+
 // ClientConfig holds configuration for the chisel client transport.
 // The server host is extracted from the upstream/downstream URLs.
 type ClientConfig struct {
@@ -35,6 +38,8 @@ type ClientConfig struct {
 	TargetUpstreamPort int
 	// TargetDownstreamPort is the original downstream port that chisel forwards to
 	TargetDownstreamPort int
+	// StartupWait is the time to wait for chisel to start (default: 2s)
+	StartupWait time.Duration
 }
 
 // ServerConfig holds configuration for the chisel server transport.
@@ -52,6 +57,8 @@ type ServerConfig struct {
 	TargetUpstreamPort int
 	// TargetDownstreamPort is the original downstream port
 	TargetDownstreamPort int
+	// StartupWait is the time to wait for chisel server to start (default: 2s)
+	StartupWait time.Duration
 }
 
 // Client represents a chisel client that forwards traffic through chisel tunnels.
@@ -77,12 +84,20 @@ func NewClient(config *ClientConfig, log *logger.Logger) *Client {
 }
 
 // extractHost extracts the host from a WebSocket URL.
+// Returns an error if the URL is empty or invalid.
 func extractHost(wsURL string) (string, error) {
+	if wsURL == "" {
+		return "", fmt.Errorf("empty URL")
+	}
 	parsed, err := url.Parse(wsURL)
 	if err != nil {
 		return "", err
 	}
-	return parsed.Hostname(), nil
+	host := parsed.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("no host in URL: %s", wsURL)
+	}
+	return host, nil
 }
 
 // Start starts the chisel client processes for upstream and downstream tunnels.
@@ -168,8 +183,12 @@ func (c *Client) Start(ctx context.Context) error {
 
 	c.running = true
 
-	// Wait for tunnels to be established
-	time.Sleep(2 * time.Second)
+	// Wait for tunnels to be established (configurable)
+	startupWait := c.config.StartupWait
+	if startupWait <= 0 {
+		startupWait = DefaultStartupWait
+	}
+	time.Sleep(startupWait)
 
 	c.log.Info().Msg("Chisel client tunnels established")
 	return nil
@@ -298,8 +317,12 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.running = true
 
-	// Wait for servers to be ready
-	time.Sleep(2 * time.Second)
+	// Wait for servers to be ready (configurable)
+	startupWait := s.config.StartupWait
+	if startupWait <= 0 {
+		startupWait = DefaultStartupWait
+	}
+	time.Sleep(startupWait)
 
 	s.log.Info().Msg("Chisel servers started")
 	return nil

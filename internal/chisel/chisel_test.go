@@ -74,8 +74,9 @@ func TestExtractHost(t *testing.T) {
 		{"wss://example.com:8443/ws/upstream", "example.com", false},
 		{"ws://localhost:8080/path", "localhost", false},
 		{"http://192.168.1.1:9000", "192.168.1.1", false},
-		{"", "", false}, // Empty URL returns empty host, not an error
+		{"", "", true},       // Empty URL should return an error
 		{"://invalid", "", true},
+		{"/path/only", "", true}, // No host in URL
 	}
 
 	for _, tt := range tests {
