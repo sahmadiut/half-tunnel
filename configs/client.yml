@@ -76,6 +76,10 @@ tunnel:
     read_buffer_size: 32768
     write_buffer_size: 32768
     keepalive_interval: "30s"
+    # Timeout for keepalive ack responses before triggering reconnection.
+    # Set higher for high-load scenarios to avoid false disconnects.
+    # Default is 3x keepalive_interval (90s for 30s interval)
+    keepalive_timeout: "90s"
     dial_timeout: "10s"
     # Buffer mode: small (16KB), default (32KB), large (64KB), max (128KB)
     buffer_mode: "default"

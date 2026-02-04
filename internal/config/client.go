@@ -90,6 +90,7 @@ type ClientConnectionConfig struct {
 	ReadBufferSize    int           `mapstructure:"read_buffer_size"`
 	WriteBufferSize   int           `mapstructure:"write_buffer_size"`
 	KeepaliveInterval time.Duration `mapstructure:"keepalive_interval"`
+	KeepaliveTimeout  time.Duration `mapstructure:"keepalive_timeout"` // Timeout for keepalive ack responses
 	DialTimeout       time.Duration `mapstructure:"dial_timeout"`
 	BufferMode        string        `mapstructure:"buffer_mode"`  // small, default, large, max
 	TCPNoDelay        bool          `mapstructure:"tcp_nodelay"`  // Disable Nagle's algorithm
@@ -154,6 +155,7 @@ func DefaultClientConfig() *ClientConfig {
 				ReadBufferSize:    32768,
 				WriteBufferSize:   32768,
 				KeepaliveInterval: 30 * time.Second,
+				KeepaliveTimeout:  90 * time.Second, // 3x keepalive interval by default
 				DialTimeout:       10 * time.Second,
 				BufferMode:        "default",
 				TCPNoDelay:        true,
@@ -260,6 +262,7 @@ func setClientDefaults(v *viper.Viper) {
 	v.SetDefault("tunnel.connection.read_buffer_size", defaults.Tunnel.Connection.ReadBufferSize)
 	v.SetDefault("tunnel.connection.write_buffer_size", defaults.Tunnel.Connection.WriteBufferSize)
 	v.SetDefault("tunnel.connection.keepalive_interval", defaults.Tunnel.Connection.KeepaliveInterval)
+	v.SetDefault("tunnel.connection.keepalive_timeout", defaults.Tunnel.Connection.KeepaliveTimeout)
 	v.SetDefault("tunnel.connection.dial_timeout", defaults.Tunnel.Connection.DialTimeout)
 	v.SetDefault("tunnel.connection.buffer_mode", defaults.Tunnel.Connection.BufferMode)
 	v.SetDefault("tunnel.connection.tcp_nodelay", defaults.Tunnel.Connection.TCPNoDelay)

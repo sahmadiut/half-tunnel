@@ -127,6 +127,7 @@ func main() {
 			Jitter:       cfg.Tunnel.Reconnect.Jitter,
 		},
 		PingInterval:     cfg.Tunnel.Connection.KeepaliveInterval,
+		KeepaliveTimeout: cfg.Tunnel.Connection.KeepaliveTimeout,
 		WriteTimeout:     cfg.Tunnel.Connection.DialTimeout,
 		ReadTimeout:      readTimeout,
 		DialTimeout:      cfg.Tunnel.Connection.DialTimeout,
