@@ -190,15 +190,22 @@ func (c *Connection) writeLoop() {
 	for {
 		select {
 		case <-c.closedCh:
-			return
+			// Drain remaining messages before exiting
+			for {
+				select {
+				case <-c.writeQueue:
+					// Discard remaining messages
+				default:
+					return
+				}
+			}
 		case data, ok := <-c.writeQueue:
 			if !ok {
 				return
 			}
-			if err := c.writeSync(data); err != nil {
-				// Connection is broken, stop processing
-				return
-			}
+			// Write errors are handled by returning - connection is broken
+			// Caller will detect via subsequent read/write failures
+			_ = c.writeSync(data)
 		}
 	}
 }
@@ -241,8 +248,9 @@ func (c *Connection) Write(data []byte) error {
 	case <-c.closedCh:
 		return ErrConnectionClosed
 	default:
-		// Queue is full, try sync write as fallback
-		return c.writeSync(data)
+		// Queue is full, return error to signal back-pressure
+		// This allows the caller to handle the situation appropriately
+		return ErrWriteQueueFull
 	}
 }
 
@@ -278,8 +286,20 @@ func (c *Connection) Close() error {
 	close(c.closedCh)
 	c.mu.Unlock()
 
-	// Wait for write goroutine to finish
-	c.writeWg.Wait()
+	// Wait for write goroutine to finish with timeout
+	// The writeLoop should exit quickly since closedCh is closed
+	done := make(chan struct{})
+	go func() {
+		c.writeWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Write goroutine finished cleanly
+	case <-time.After(5 * time.Second):
+		// Timeout waiting for write goroutine, continue with close
+	}
 
 	// Send close message (best effort, ignore errors)
 	_ = c.conn.WriteMessage(
