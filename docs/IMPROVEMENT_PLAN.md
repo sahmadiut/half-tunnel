@@ -282,29 +282,26 @@ Simplify installation and service management.
 - [x] Add `HALFTUNNEL_INSTALL_SERVICE=1` for non-interactive service installation
 - [x] Support for automated deployment scripts
 
-### 4.2 Configuration Management
+### 4.2 Configuration Management ✅ (Complete)
 ```bash
 # Generate default configs during installation
 half-tunnel config generate --type server --output /etc/half-tunnel/server.yml
 half-tunnel config generate --type client --output /etc/half-tunnel/client.yml
 ```
 
-### 4.3 Service Management Commands
+### 4.3 Service Management Commands ✅ (Complete)
 ```bash
 # Add to CLI
-half-tunnel service install   # Install systemd services
-half-tunnel service start     # Start services
-half-tunnel service stop      # Stop services
-half-tunnel service status    # Check service status
-half-tunnel service logs      # View service logs
+half-tunnel service install --type server   # Install server systemd service
+half-tunnel service install --type client   # Install client systemd service
+half-tunnel service start --type server     # Start server service
+half-tunnel service stop --type client      # Stop client service
+half-tunnel service status --type server    # Check server service status
+half-tunnel service logs --type client      # View client service logs
 ```
 
-### 4.4 Docker Improvements
-```dockerfile
-# Add health checks
-HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD wget -q -O- http://localhost:8080/healthz || exit 1
-```
+### 4.4 Docker Improvements (Not Required)
+- Docker changes are out of scope for this phase per current request.
 
 ---
 
@@ -398,7 +395,7 @@ The server currently supports multiple clients connecting simultaneously:
 | Phase 1: Logging | High | Low | High | ✅ Partially Complete |
 | Phase 2: Speed | High | Medium | High | ✅ Complete |
 | Phase 3: Fault Tolerance | Medium | Medium | High | ✅ Complete |
-| Phase 4: Installation | High | Low | Medium | ✅ Partially Complete |
+| Phase 4: Installation | High | Low | Medium | ✅ Complete (Docker skipped) |
 | Phase 5: Code Quality | Medium | High | Medium | Pending |
 | Phase 6: Advanced | Low | High | Medium | Pending |
 
@@ -435,7 +432,7 @@ The server currently supports multiple clients connecting simultaneously:
 2. ~~Run performance benchmarks to identify bottlenecks~~ (Phase 2 complete)
 3. ~~Implement Phase 2 buffer optimizations based on benchmark results~~ (Complete)
 4. ~~Add health monitoring for Phase 3~~ (Complete)
-5. Create CLI commands for service management (Phase 4)
+5. ~~Create CLI commands for service management (Phase 4)~~ ✅
 6. Implement Phase 3.5 Graceful Degradation (single-path fallback, packet queuing)
 
 ---
