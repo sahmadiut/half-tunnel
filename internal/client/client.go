@@ -129,6 +129,7 @@ type Client struct {
 	// State
 	running          int32
 	reconnecting     int32
+	servicesRunning  int32 // Track if SOCKS5/port forwarding are active
 	lastKeepAliveAck int64
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -220,11 +221,37 @@ func (c *Client) Start(ctx context.Context) error {
 		// Start downstream reader goroutine
 		c.wg.Add(1)
 		go c.readDownstream(ctx)
+
+		// Start SOCKS5 and port forwarding only after successful connection
+		c.startServices(ctx)
 	}
 
 	if c.config.PingInterval > 0 {
 		c.wg.Add(1)
 		go c.keepaliveLoop(ctx)
+	}
+
+	// Start data flow monitor
+	c.dataFlowMonitor.SetStallCallback(c.handleDataFlowStall)
+	c.dataFlowMonitor.Start(ctx)
+	c.log.Info().
+		Dur("check_interval", c.config.DataFlowMonitor.CheckInterval).
+		Dur("stall_threshold", c.config.DataFlowMonitor.StallThreshold).
+		Msg("Data flow monitor started")
+
+	// Start periodic metrics logging
+	c.wg.Add(1)
+	go c.logMetricsPeriodically(ctx)
+
+	return nil
+}
+
+// startServices starts SOCKS5 and port forwarding services.
+// These are only started when the tunnel is connected.
+func (c *Client) startServices(ctx context.Context) {
+	if !atomic.CompareAndSwapInt32(&c.servicesRunning, 0, 1) {
+		// Services are already running
+		return
 	}
 
 	// Start SOCKS5 server if enabled
@@ -246,7 +273,7 @@ func (c *Client) Start(ctx context.Context) error {
 
 		c.log.Info().
 			Str("addr", c.config.SOCKS5Addr).
-			Msg("SOCKS5 proxy started")
+			Msg("SOCKS5 proxy started (tunnel connected)")
 	}
 
 	// Start port forwarding listeners
@@ -259,20 +286,31 @@ func (c *Client) Start(ctx context.Context) error {
 			// Continue with other port forwards even if one fails
 		}
 	}
+}
 
-	// Start data flow monitor
-	c.dataFlowMonitor.SetStallCallback(c.handleDataFlowStall)
-	c.dataFlowMonitor.Start(ctx)
-	c.log.Info().
-		Dur("check_interval", c.config.DataFlowMonitor.CheckInterval).
-		Dur("stall_threshold", c.config.DataFlowMonitor.StallThreshold).
-		Msg("Data flow monitor started")
+// stopServices stops SOCKS5 and port forwarding services.
+// Called when the tunnel disconnects.
+func (c *Client) stopServices() {
+	if !atomic.CompareAndSwapInt32(&c.servicesRunning, 1, 0) {
+		// Services are not running
+		return
+	}
 
-	// Start periodic metrics logging
-	c.wg.Add(1)
-	go c.logMetricsPeriodically(ctx)
+	c.log.Info().Msg("Stopping services (tunnel disconnected)")
 
-	return nil
+	// Close SOCKS5 server
+	if c.socks5 != nil {
+		c.socks5.Close()
+		c.socks5 = nil
+	}
+
+	// Close port forward listeners
+	c.mu.Lock()
+	for _, listener := range c.portForwardListeners {
+		listener.Close()
+	}
+	c.portForwardListeners = nil
+	c.mu.Unlock()
 }
 
 // Stop stops the client gracefully.
@@ -298,6 +336,7 @@ func (c *Client) cleanup() {
 
 	atomic.StoreInt32(&c.reconnecting, 0)
 	atomic.StoreInt64(&c.lastKeepAliveAck, 0)
+	atomic.StoreInt32(&c.servicesRunning, 0)
 
 	// Stop data flow monitor
 	if c.dataFlowMonitor != nil {
@@ -307,6 +346,7 @@ func (c *Client) cleanup() {
 	// Close SOCKS5 server
 	if c.socks5 != nil {
 		c.socks5.Close()
+		c.socks5 = nil
 	}
 
 	// Close port forward listeners
@@ -891,6 +931,10 @@ func (c *Client) handleReconnect(ctx context.Context, source string) {
 	}
 
 	c.log.Warn().Str("source", source).Msg("Connection lost, attempting reconnect")
+
+	// Stop services (SOCKS5/port forwarding) when tunnel disconnects
+	c.stopServices()
+
 	c.cleanupConnections()
 	c.closeAllStreams()
 	c.mux.Close()
@@ -909,6 +953,9 @@ func (c *Client) handleReconnect(ctx context.Context, source string) {
 			c.log.Info().Str("session_id", c.session.ID.String()).Msg("Reconnected to server")
 			c.wg.Add(1)
 			go c.readDownstream(ctx)
+
+			// Restart services (SOCKS5/port forwarding) after successful reconnection
+			c.startServices(ctx)
 			return
 		}
 

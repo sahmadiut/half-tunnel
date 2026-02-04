@@ -40,9 +40,24 @@ type Stream struct {
 	State     State
 	SeqNum    uint32 // Next sequence number to send
 	AckNum    uint32 // Next expected sequence number
+	BytesSent int64  // Total bytes sent through this stream
+	BytesRecv int64  // Total bytes received through this stream
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	mu        sync.RWMutex
+}
+
+// StreamState holds the state of a stream for persistence and resumption.
+// This is used for stream recovery after reconnection.
+// Note: Checksum is not automatically populated by GetStreamState() - it should be
+// calculated at the packet level using Packet.CalculateChecksum() when needed.
+type StreamState struct {
+	ID           uint32
+	State        State
+	BytesSent    int64
+	BytesRecv    int64
+	LastActivity time.Time
+	Checksum     uint32 // For data integrity verification (calculated by caller)
 }
 
 // NewStream creates a new stream with the given ID.
@@ -53,6 +68,8 @@ func NewStream(id uint32) *Stream {
 		State:     StateOpen,
 		SeqNum:    0,
 		AckNum:    0,
+		BytesSent: 0,
+		BytesRecv: 0,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -91,6 +108,22 @@ func (s *Stream) UpdateAckNum(ack uint32) {
 		s.AckNum = ack
 		s.UpdatedAt = time.Now()
 	}
+}
+
+// AddBytesSent adds bytes to the sent counter.
+func (s *Stream) AddBytesSent(n int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.BytesSent += n
+	s.UpdatedAt = time.Now()
+}
+
+// AddBytesRecv adds bytes to the received counter.
+func (s *Stream) AddBytesRecv(n int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.BytesRecv += n
+	s.UpdatedAt = time.Now()
 }
 
 // Session represents a client session with upstream and downstream state.
@@ -173,4 +206,41 @@ func (s *Session) Touch() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.UpdatedAt = time.Now()
+}
+
+// ResumeStream resumes a stream with the given state after reconnection.
+// This allows stream recovery after connection failures.
+func (s *Session) ResumeStream(id uint32, state StreamState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stream := NewStream(id)
+	stream.State = state.State
+	stream.BytesSent = state.BytesSent
+	stream.BytesRecv = state.BytesRecv
+	s.streams[id] = stream
+	s.UpdatedAt = time.Now()
+	return nil
+}
+
+// GetStreamState returns the current state of a stream for persistence.
+func (s *Session) GetStreamState(streamID uint32) (StreamState, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	stream, exists := s.streams[streamID]
+	if !exists {
+		return StreamState{}, false
+	}
+
+	stream.mu.RLock()
+	defer stream.mu.RUnlock()
+
+	return StreamState{
+		ID:           stream.ID,
+		State:        stream.State,
+		BytesSent:    stream.BytesSent,
+		BytesRecv:    stream.BytesRecv,
+		LastActivity: stream.UpdatedAt,
+	}, true
 }

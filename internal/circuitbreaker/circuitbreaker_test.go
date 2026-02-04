@@ -298,3 +298,105 @@ func TestState_String(t *testing.T) {
 		}
 	}
 }
+
+// Tests for DestinationBreaker
+
+func TestDestinationBreaker_New(t *testing.T) {
+	db := NewDestinationBreaker(nil)
+	if db == nil {
+		t.Fatal("expected non-nil DestinationBreaker")
+	}
+	if db.breakers == nil {
+		t.Error("expected non-nil breakers map")
+	}
+}
+
+func TestDestinationBreaker_Get(t *testing.T) {
+	db := NewDestinationBreaker(nil)
+
+	cb1 := db.Get("example.com:80")
+	if cb1 == nil {
+		t.Fatal("expected non-nil circuit breaker")
+	}
+
+	cb2 := db.Get("example.com:80")
+	if cb1 != cb2 {
+		t.Error("expected same circuit breaker for same destination")
+	}
+
+	cb3 := db.Get("other.com:443")
+	if cb1 == cb3 {
+		t.Error("expected different circuit breaker for different destination")
+	}
+}
+
+func TestDestinationBreaker_AllowAndRecord(t *testing.T) {
+	config := &Config{
+		MaxFailures:         2,
+		Timeout:             1 * time.Second,
+		MaxHalfOpenRequests: 1,
+	}
+	db := NewDestinationBreaker(config)
+
+	dest := "example.com:80"
+
+	// Initially should allow
+	if !db.Allow(dest) {
+		t.Error("should allow initially")
+	}
+
+	// Record failures up to max
+	db.RecordFailure(dest)
+	db.RecordFailure(dest)
+
+	// Now should not allow
+	if db.Allow(dest) {
+		t.Error("should not allow after max failures")
+	}
+
+	// Other destination should still work
+	if !db.Allow("other.com:80") {
+		t.Error("other destination should still allow")
+	}
+}
+
+func TestDestinationBreaker_Remove(t *testing.T) {
+	db := NewDestinationBreaker(nil)
+
+	dest := "example.com:80"
+	_ = db.Get(dest)
+
+	db.Remove(dest)
+
+	// Getting again should create a new one
+	cb := db.Get(dest)
+	if cb.State() != StateClosed {
+		t.Error("removed destination should have fresh circuit breaker")
+	}
+}
+
+func TestDestinationBreaker_Reset(t *testing.T) {
+	db := NewDestinationBreaker(nil)
+
+	_ = db.Get("example.com:80")
+	_ = db.Get("other.com:443")
+
+	db.Reset()
+
+	stats := db.DestinationStats()
+	if len(stats) != 0 {
+		t.Errorf("expected 0 destinations after reset, got %d", len(stats))
+	}
+}
+
+func TestDestinationBreaker_Stats(t *testing.T) {
+	db := NewDestinationBreaker(nil)
+
+	db.RecordSuccess("example.com:80")
+	db.RecordFailure("other.com:443")
+
+	stats := db.DestinationStats()
+	if len(stats) != 2 {
+		t.Errorf("expected 2 destinations, got %d", len(stats))
+	}
+}

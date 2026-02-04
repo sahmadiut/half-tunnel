@@ -154,3 +154,68 @@ func TestStartTriggersReconnectOnFailure(t *testing.T) {
 
 	_ = client.Stop()
 }
+
+func TestServicesNotStartedWhenNotConnected(t *testing.T) {
+	originalDial := dialTransport
+
+	// Make dial fail immediately
+	dialTransport = func(ctx context.Context, config *transport.Config) (*transport.Connection, error) {
+		return nil, context.DeadlineExceeded
+	}
+
+	config := DefaultConfig()
+	config.SOCKS5Enabled = true
+	config.SOCKS5Addr = "127.0.0.1:0" // Use port 0 to avoid conflicts
+	config.PortForwards = []PortForward{
+		{Name: "test", ListenHost: "127.0.0.1", ListenPort: 0, RemoteHost: "127.0.0.1", RemotePort: 80},
+	}
+	config.PingInterval = 0
+	config.ReconnectEnabled = true
+	config.DialTimeout = time.Millisecond
+
+	client := New(config, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if err := client.Start(ctx); err != nil {
+		cancel()
+		dialTransport = originalDial
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	// Services should NOT be running when not connected
+	if client.socks5 != nil {
+		cancel()
+		_ = client.Stop()
+		dialTransport = originalDial
+		t.Error("SOCKS5 server should not be started when tunnel is not connected")
+		return
+	}
+
+	// Port forward listeners should also NOT be running
+	client.mu.RLock()
+	pfListeners := len(client.portForwardListeners)
+	client.mu.RUnlock()
+	if pfListeners > 0 {
+		cancel()
+		_ = client.Stop()
+		dialTransport = originalDial
+		t.Error("Port forward listeners should not be started when tunnel is not connected")
+		return
+	}
+
+	// Cleanup: stop client first, then restore dial
+	cancel()
+	_ = client.Stop()
+	// Give goroutines time to finish
+	time.Sleep(10 * time.Millisecond)
+	dialTransport = originalDial
+}
+
+func TestServicesRunningStateTracking(t *testing.T) {
+	client := New(nil, nil)
+
+	// Initially, services should not be running
+	if client.servicesRunning != 0 {
+		t.Error("Services should not be running initially")
+	}
+}
