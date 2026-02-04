@@ -140,3 +140,13 @@ func (l *Logger) WithFields(fields map[string]interface{}) *Logger {
 	}
 	return &Logger{zl: ctx.Logger()}
 }
+
+// WithDuration returns a new logger with the given duration added.
+func (l *Logger) WithDuration(key string, d time.Duration) *Logger {
+	return &Logger{zl: l.zl.With().Dur(key, d).Logger()}
+}
+
+// WithBytes returns a new logger with the given byte count added.
+func (l *Logger) WithBytes(key string, b int64) *Logger {
+	return &Logger{zl: l.zl.With().Int64(key, b).Logger()}
+}
