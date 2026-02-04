@@ -1,8 +1,8 @@
 # Binaries
 bin/
-server
-client
-half-tunnel
+/server
+/client
+/half-tunnel
 *.exe
 *.exe~
 *.dll

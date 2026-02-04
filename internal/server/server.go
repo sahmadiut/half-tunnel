@@ -169,13 +169,18 @@ func (s *Server) Start(ctx context.Context) error {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.log.Info().Str("addr", s.config.UpstreamAddr).Msg("Starting upstream server")
 		if s.config.UpstreamTLS.Enabled {
+			s.log.Info().
+				Str("addr", s.config.UpstreamAddr).
+				Bool("tls", true).
+				Str("cert_file", s.config.UpstreamTLS.CertFile).
+				Msg("Starting upstream server with TLS")
 			if err := s.upstreamServer.ListenAndServeTLS(s.config.UpstreamTLS.CertFile, s.config.UpstreamTLS.KeyFile); err != nil && err != http.ErrServerClosed {
 				s.log.Error().Err(err).Msg("Upstream server error")
 			}
 			return
 		}
+		s.log.Info().Str("addr", s.config.UpstreamAddr).Bool("tls", false).Msg("Starting upstream server")
 		if err := s.upstreamServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.log.Error().Err(err).Msg("Upstream server error")
 		}
@@ -185,13 +190,18 @@ func (s *Server) Start(ctx context.Context) error {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.log.Info().Str("addr", s.config.DownstreamAddr).Msg("Starting downstream server")
 		if s.config.DownstreamTLS.Enabled {
+			s.log.Info().
+				Str("addr", s.config.DownstreamAddr).
+				Bool("tls", true).
+				Str("cert_file", s.config.DownstreamTLS.CertFile).
+				Msg("Starting downstream server with TLS")
 			if err := s.downstreamServer.ListenAndServeTLS(s.config.DownstreamTLS.CertFile, s.config.DownstreamTLS.KeyFile); err != nil && err != http.ErrServerClosed {
 				s.log.Error().Err(err).Msg("Downstream server error")
 			}
 			return
 		}
+		s.log.Info().Str("addr", s.config.DownstreamAddr).Bool("tls", false).Msg("Starting downstream server")
 		if err := s.downstreamServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			s.log.Error().Err(err).Msg("Downstream server error")
 		}

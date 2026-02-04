@@ -277,11 +277,21 @@ func (c *ClientConfig) GetPortForwards() ([]PortForward, error) {
 // ParsePortForwards handles flexible YAML input formats for port forwarding.
 // Supports:
 // - int: just port number (e.g., 2083)
-// - string: port specification (e.g., "8080", "8080:80", "8080:example.com:80")
+// - string: port specification (e.g., "8080", "8080:80", "8080:example.com:80", "1000-1200")
 // - map: full object with optional fields
 func ParsePortForwards(raw []interface{}) ([]PortForward, error) {
 	var result []PortForward
 	for i, entry := range raw {
+		// Check if it's a port range string
+		if str, ok := entry.(string); ok && isPortRange(str) {
+			ports, err := ParsePortForwardStringRange(str)
+			if err != nil {
+				return nil, fmt.Errorf("port_forwards[%d]: %w", i, err)
+			}
+			result = append(result, ports...)
+			continue
+		}
+
 		pf, err := parsePortForwardEntry(entry)
 		if err != nil {
 			return nil, fmt.Errorf("port_forwards[%d]: %w", i, err)
@@ -297,8 +307,9 @@ func parsePortForwardEntry(entry interface{}) (*PortForward, error) {
 	case int:
 		// Simple format: just port number
 		return &PortForward{
-			ListenHost: "127.0.0.1",
+			ListenHost: "0.0.0.0",
 			ListenPort: v,
+			RemoteHost: "127.0.0.1",
 			RemotePort: v,
 			Protocol:   "tcp",
 		}, nil
@@ -306,13 +317,14 @@ func parsePortForwardEntry(entry interface{}) (*PortForward, error) {
 		// YAML sometimes parses numbers as float64
 		port := int(v)
 		return &PortForward{
-			ListenHost: "127.0.0.1",
+			ListenHost: "0.0.0.0",
 			ListenPort: port,
+			RemoteHost: "127.0.0.1",
 			RemotePort: port,
 			Protocol:   "tcp",
 		}, nil
 	case string:
-		// String format: "port", "listen:remote", or "listen:host:remote"
+		// String format: "port", "listen:remote", "listen:host:remote", or "start-end" (port range)
 		return ParsePortForwardString(v)
 	case map[string]interface{}:
 		// Object format: parse fields with defaults
@@ -322,14 +334,67 @@ func parsePortForwardEntry(entry interface{}) (*PortForward, error) {
 	}
 }
 
+// isValidPort checks if a port number is in the valid range (1-65535).
+func isValidPort(port int) bool {
+	return port >= 1 && port <= 65535
+}
+
+// parsePortRange parses a port range string "start-end" and returns start, end ports.
+// Returns an error if the format is invalid or ports are out of range.
+func parsePortRange(spec string) (startPort, endPort int, err error) {
+	parts := strings.Split(spec, "-")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid port range format: %s (expected start-end)", spec)
+	}
+
+	startPort, err = strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid start port: %s", parts[0])
+	}
+	endPort, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid end port: %s", parts[1])
+	}
+
+	if !isValidPort(startPort) {
+		return 0, 0, fmt.Errorf("invalid start port: %d (must be 1-65535)", startPort)
+	}
+	if !isValidPort(endPort) {
+		return 0, 0, fmt.Errorf("invalid end port: %d (must be 1-65535)", endPort)
+	}
+	if startPort > endPort {
+		return 0, 0, fmt.Errorf("start port %d is greater than end port %d", startPort, endPort)
+	}
+
+	return startPort, endPort, nil
+}
+
 // ParsePortForwardString parses flexible port forward string formats:
 // - "2083" → listen:2083, remote:2083
 // - "8080:80" → listen:8080, remote:80
 // - "8080:example.com:80" → listen:8080, remote:example.com:80
+// - "1000-1200" → port range (returns first port, use ParsePortForwardStringRange for all)
 func ParsePortForwardString(spec string) (*PortForward, error) {
+	// Check for port range format (e.g., "1000-1200")
+	if isPortRange(spec) {
+		startPort, _, err := parsePortRange(spec)
+		if err != nil {
+			return nil, err
+		}
+		// Return the first port of the range (use ParsePortForwardStringRange for all ports)
+		return &PortForward{
+			ListenHost: "0.0.0.0",
+			ListenPort: startPort,
+			RemoteHost: "127.0.0.1",
+			RemotePort: startPort,
+			Protocol:   "tcp",
+		}, nil
+	}
+
 	parts := strings.Split(spec, ":")
 	pf := &PortForward{
-		ListenHost: "127.0.0.1",
+		ListenHost: "0.0.0.0",
+		RemoteHost: "127.0.0.1",
 		Protocol:   "tcp",
 	}
 
@@ -374,10 +439,48 @@ func ParsePortForwardString(spec string) (*PortForward, error) {
 	return pf, nil
 }
 
+// ParsePortForwardStringRange parses a port range string and returns all port forwards.
+// Format: "start-end" (e.g., "1000-1200")
+// Returns a slice of PortForward for each port in the range.
+func ParsePortForwardStringRange(spec string) ([]PortForward, error) {
+	startPort, endPort, err := parsePortRange(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []PortForward
+	for port := startPort; port <= endPort; port++ {
+		result = append(result, PortForward{
+			ListenHost: "0.0.0.0",
+			ListenPort: port,
+			RemoteHost: "127.0.0.1",
+			RemotePort: port,
+			Protocol:   "tcp",
+		})
+	}
+
+	return result, nil
+}
+
+// isPortRange checks if a string is a port range format.
+func isPortRange(spec string) bool {
+	if !strings.Contains(spec, "-") || strings.Contains(spec, ":") {
+		return false
+	}
+	parts := strings.Split(spec, "-")
+	if len(parts) != 2 {
+		return false
+	}
+	_, err1 := strconv.Atoi(parts[0])
+	_, err2 := strconv.Atoi(parts[1])
+	return err1 == nil && err2 == nil
+}
+
 // parsePortForwardMap parses a port forward from a map.
 func parsePortForwardMap(m map[string]interface{}) (*PortForward, error) {
 	pf := &PortForward{
-		ListenHost: "127.0.0.1",
+		ListenHost: "0.0.0.0",
+		RemoteHost: "127.0.0.1",
 		Protocol:   "tcp",
 	}
 

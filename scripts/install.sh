@@ -9,6 +9,7 @@
 #   HALFTUNNEL_VERSION - Specify a version to install (default: latest)
 #   HALFTUNNEL_INSTALL_DIR - Installation directory (default: /usr/local/bin)
 #   HALFTUNNEL_NO_SUDO - Set to 1 to skip sudo (for non-root installs)
+#   HALFTUNNEL_INSTALL_SERVICE - Set to 1 to automatically install systemd services (non-interactive)
 
 set -e
 
@@ -17,6 +18,7 @@ REPO="sahmadiut/half-tunnel"
 INSTALL_DIR="${HALFTUNNEL_INSTALL_DIR:-/usr/local/bin}"
 VERSION="${HALFTUNNEL_VERSION:-}"
 USE_SUDO="${HALFTUNNEL_NO_SUDO:-0}"
+INSTALL_SERVICE="${HALFTUNNEL_INSTALL_SERVICE:-0}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -157,23 +159,10 @@ verify_installation() {
     fi
 }
 
-# Create systemd service files (optional)
-create_systemd_services() {
-    if [ ! -d "/etc/systemd/system" ]; then
-        warn "systemd not detected, skipping service file creation"
-        return
-    fi
-
-    read -p "Would you like to create systemd service files? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        return
-    fi
-
-    local SUDO=""
-    if [ ! -w "/etc/systemd/system" ]; then
-        SUDO="sudo"
-    fi
+# Helper function to write systemd service files
+# Arguments: $1 = SUDO command (empty or "sudo")
+_write_systemd_services() {
+    local SUDO="$1"
 
     # Create server service
     $SUDO tee /etc/systemd/system/half-tunnel-server.service > /dev/null << EOF
@@ -227,6 +216,46 @@ EOF
     echo "  sudo systemctl start half-tunnel-server"
 }
 
+# Create systemd service files (interactive mode)
+create_systemd_services() {
+    if [ ! -d "/etc/systemd/system" ]; then
+        warn "systemd not detected, skipping service file creation"
+        return
+    fi
+
+    read -p "Would you like to create systemd service files? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        return
+    fi
+
+    local SUDO=""
+    if [ ! -w "/etc/systemd/system" ]; then
+        SUDO="sudo"
+    fi
+
+    _write_systemd_services "$SUDO"
+}
+
+# Install systemd service files (non-interactive mode)
+install_systemd_services_noninteractive() {
+    if [ ! -d "/etc/systemd/system" ]; then
+        warn "systemd not detected, skipping service file creation"
+        return
+    fi
+
+    local SUDO=""
+    if [ ! -w "/etc/systemd/system" ]; then
+        if command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+        else
+            error "Cannot write to /etc/systemd/system and sudo is not available"
+        fi
+    fi
+
+    _write_systemd_services "$SUDO"
+}
+
 # Print usage information
 print_usage() {
     echo ""
@@ -269,8 +298,12 @@ main() {
     download_and_install
     verify_installation
     
-    # Only prompt for systemd if running interactively
-    if [ -t 0 ]; then
+    # Non-interactive service installation if HALFTUNNEL_INSTALL_SERVICE=1
+    if [ "$INSTALL_SERVICE" = "1" ]; then
+        info "Installing systemd services (non-interactive mode)..."
+        install_systemd_services_noninteractive
+    elif [ -t 0 ]; then
+        # Only prompt for systemd if running interactively
         create_systemd_services
     fi
     
