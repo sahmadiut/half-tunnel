@@ -1,4 +1,9 @@
 // Package client provides the Half-Tunnel entry client implementation.
+//
+// Logging Performance Note:
+// Per-packet DEBUG logging is intentionally verbose for troubleshooting.
+// In production, use INFO or higher log levels to avoid performance impact.
+// Periodic metrics (logged every 30s at INFO level) provide aggregate monitoring.
 package client
 
 import (
@@ -484,8 +489,7 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 
 	// Write data to the client connection
 	if pkt.IsData() && len(pkt.Payload) > 0 {
-		// Note: Debug logging for each packet is intentional for troubleshooting.
-		// In production, use INFO or higher log level to avoid performance impact.
+		// Per-packet DEBUG logging (see package doc for performance notes)
 		c.log.Debug().
 			Uint32("stream_id", pkt.StreamID).
 			Int("bytes", len(pkt.Payload)).
@@ -616,8 +620,7 @@ func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 		}
 
 		if n > 0 {
-			// Note: Debug logging for each packet is intentional for troubleshooting.
-			// In production, use INFO or higher log level to avoid performance impact.
+			// Per-packet DEBUG logging (see package doc for performance notes)
 			c.log.Debug().
 				Uint32("stream_id", sc.streamID).
 				Int("bytes", n).

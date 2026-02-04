@@ -49,8 +49,8 @@ func TestWithBytes(t *testing.T) {
 	// Redirect output to buffer
 	log.zl = log.zl.Output(&buf)
 
-	bytes := int64(1024 * 1024)
-	log.WithBytes("bytes_sent", bytes).Info().Msg("test message")
+	byteCount := int64(1024 * 1024)
+	log.WithBytes("bytes_sent", byteCount).Info().Msg("test message")
 
 	// Parse JSON output
 	var result map[string]interface{}

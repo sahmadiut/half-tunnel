@@ -1,4 +1,9 @@
 // Package server provides the Half-Tunnel exit server implementation.
+//
+// Logging Performance Note:
+// Per-packet DEBUG logging is intentionally verbose for troubleshooting.
+// In production, use INFO or higher log levels to avoid performance impact.
+// Periodic metrics (logged every 30s at INFO level) provide aggregate monitoring.
 package server
 
 import (
@@ -539,8 +544,7 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 
 	// Handle data packets - forward to destination
 	if pkt.IsData() && len(pkt.Payload) > 0 {
-		// Note: Debug logging for each packet is intentional for troubleshooting.
-		// In production, use INFO or higher log level to avoid performance impact.
+		// Per-packet DEBUG logging (see package doc for performance notes)
 		s.log.Debug().
 			Uint32("stream_id", pkt.StreamID).
 			Int("bytes", len(pkt.Payload)).
@@ -596,8 +600,7 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 		}
 
 		if n > 0 {
-			// Note: Debug logging for each packet is intentional for troubleshooting.
-			// In production, use INFO or higher log level to avoid performance impact.
+			// Per-packet DEBUG logging (see package doc for performance notes)
 			s.log.Debug().
 				Uint32("stream_id", streamID).
 				Int("bytes", n).
