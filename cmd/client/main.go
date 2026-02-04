@@ -134,6 +134,8 @@ func main() {
 		HandshakeTimeout: cfg.Tunnel.Connection.DialTimeout,
 		ReadBufferSize:   cfg.Tunnel.Connection.ReadBufferSize,
 		WriteBufferSize:  cfg.Tunnel.Connection.WriteBufferSize,
+		IPVersion:        cfg.Tunnel.Connection.IPVersion,
+		TCPNoDelay:       cfg.Tunnel.Connection.TCPNoDelay,
 	}
 
 	// Set SOCKS5 authentication if enabled
@@ -154,6 +156,8 @@ func main() {
 	}
 	clientConfig.UpstreamTLS = upstreamTLS
 	clientConfig.DownstreamTLS = downstreamTLS
+	clientConfig.UpstreamResolveIP = cfg.Client.Upstream.ResolveIP
+	clientConfig.DownstreamResolveIP = cfg.Client.Downstream.ResolveIP
 
 	// Create and start the client
 	c := client.New(clientConfig, log)

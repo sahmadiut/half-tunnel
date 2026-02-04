@@ -25,7 +25,7 @@ var (
 )
 
 // WriteQueueSize is the default size of the async write queue.
-const WriteQueueSize = 10000
+const WriteQueueSize = 20000
 
 // Config holds transport configuration.
 type Config struct {

@@ -48,6 +48,7 @@ type Config struct {
 	WriteBufferSize int
 	MaxMessageSize  int
 	DialTimeout     time.Duration
+	BufferMode      constants.BufferMode
 }
 
 // TLSConfig holds TLS certificate settings.
@@ -68,10 +69,11 @@ func DefaultConfig() *Config {
 		DownstreamTLS:   TLSConfig{},
 		SessionTimeout:  5 * time.Minute,
 		MaxSessions:     1000,
-		ReadBufferSize:  32768,
-		WriteBufferSize: 32768,
+		ReadBufferSize:  constants.DefaultBufferSize,
+		WriteBufferSize: constants.DefaultBufferSize,
 		MaxMessageSize:  65536,
 		DialTimeout:     10 * time.Second,
+		BufferMode:      constants.BufferModeLarge,
 	}
 }
 
@@ -584,7 +586,9 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUID, streamID uint32, destConn net.Conn) {
 	defer s.closeNatEntry(sessionID, streamID)
 
-	buf := make([]byte, constants.DefaultBufferSize)
+	bufferPool := transport.GetBufferPool(s.config.BufferMode)
+	buf := bufferPool.Get()
+	defer bufferPool.Put(buf)
 	key := natKey{SessionID: sessionID, StreamID: streamID}
 
 	// Get the NAT entry once at the start - the pointer is stable once created
@@ -592,11 +596,7 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 	entry, entryExists := s.natTable[key]
 	s.natTableMu.RUnlock()
 
-	// Calculate read deadline once (2x session timeout, minimum 5 minutes)
-	readDeadline := 2 * s.config.SessionTimeout
-	if readDeadline < 5*time.Minute {
-		readDeadline = 5 * time.Minute
-	}
+	readDeadline := 30 * time.Second
 
 	for {
 		select {

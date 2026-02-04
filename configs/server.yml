@@ -46,12 +46,12 @@ tunnel:
     
   # Connection settings
   connection:
-    read_buffer_size: 32768
-    write_buffer_size: 32768
+    read_buffer_size: 65536
+    write_buffer_size: 65536
     keepalive_interval: "30s"
     max_message_size: 65536
     # Buffer mode: small (16KB), default (32KB), large (64KB), max (128KB)
-    buffer_mode: "default"
+    buffer_mode: "large"
     # TCP_NODELAY: disable Nagle's algorithm for lower latency
     tcp_nodelay: true
     

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/internal/socks5"
 	"github.com/sahmadiut/half-tunnel/internal/transport"
 )
@@ -27,6 +28,12 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if config.ReconnectConfig == nil {
 		t.Error("Expected reconnect config to be set")
+	}
+	if config.ReadBufferSize != constants.LargeBufferSize {
+		t.Errorf("Expected ReadBufferSize %d, got %d", constants.LargeBufferSize, config.ReadBufferSize)
+	}
+	if config.WriteBufferSize != constants.LargeBufferSize {
+		t.Errorf("Expected WriteBufferSize %d, got %d", constants.LargeBufferSize, config.WriteBufferSize)
 	}
 }
 
