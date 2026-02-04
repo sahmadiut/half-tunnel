@@ -31,8 +31,9 @@ type ClientSettings struct {
 
 // ClientEndpoint defines a client connection endpoint.
 type ClientEndpoint struct {
-	URL string          `mapstructure:"url"`
-	TLS ClientTLSConfig `mapstructure:"tls"`
+	URL       string          `mapstructure:"url"`
+	TLS       ClientTLSConfig `mapstructure:"tls"`
+	ResolveIP string          `mapstructure:"resolve_ip"` // Manual IP to use instead of DNS lookup
 }
 
 // ClientTLSConfig holds TLS configuration for client connections.
@@ -90,6 +91,9 @@ type ClientConnectionConfig struct {
 	WriteBufferSize   int           `mapstructure:"write_buffer_size"`
 	KeepaliveInterval time.Duration `mapstructure:"keepalive_interval"`
 	DialTimeout       time.Duration `mapstructure:"dial_timeout"`
+	BufferMode        string        `mapstructure:"buffer_mode"`  // small, default, large, max
+	TCPNoDelay        bool          `mapstructure:"tcp_nodelay"`  // Disable Nagle's algorithm
+	IPVersion         string        `mapstructure:"ip_version"`   // "4", "6", or "" for auto
 }
 
 // DNSConfig holds DNS settings for VPN mode.
@@ -151,6 +155,9 @@ func DefaultClientConfig() *ClientConfig {
 				WriteBufferSize:   32768,
 				KeepaliveInterval: 30 * time.Second,
 				DialTimeout:       10 * time.Second,
+				BufferMode:        "default",
+				TCPNoDelay:        true,
+				IPVersion:         "", // auto
 			},
 			Encryption: EncryptionConfig{
 				Enabled:   true,
@@ -234,9 +241,11 @@ func setClientDefaults(v *viper.Viper) {
 	v.SetDefault("client.upstream.url", defaults.Client.Upstream.URL)
 	v.SetDefault("client.upstream.tls.enabled", defaults.Client.Upstream.TLS.Enabled)
 	v.SetDefault("client.upstream.tls.skip_verify", defaults.Client.Upstream.TLS.SkipVerify)
+	v.SetDefault("client.upstream.resolve_ip", defaults.Client.Upstream.ResolveIP)
 	v.SetDefault("client.downstream.url", defaults.Client.Downstream.URL)
 	v.SetDefault("client.downstream.tls.enabled", defaults.Client.Downstream.TLS.Enabled)
 	v.SetDefault("client.downstream.tls.skip_verify", defaults.Client.Downstream.TLS.SkipVerify)
+	v.SetDefault("client.downstream.resolve_ip", defaults.Client.Downstream.ResolveIP)
 
 	v.SetDefault("socks5.enabled", defaults.SOCKS5.Enabled)
 	v.SetDefault("socks5.listen_host", defaults.SOCKS5.ListenHost)
@@ -252,6 +261,9 @@ func setClientDefaults(v *viper.Viper) {
 	v.SetDefault("tunnel.connection.write_buffer_size", defaults.Tunnel.Connection.WriteBufferSize)
 	v.SetDefault("tunnel.connection.keepalive_interval", defaults.Tunnel.Connection.KeepaliveInterval)
 	v.SetDefault("tunnel.connection.dial_timeout", defaults.Tunnel.Connection.DialTimeout)
+	v.SetDefault("tunnel.connection.buffer_mode", defaults.Tunnel.Connection.BufferMode)
+	v.SetDefault("tunnel.connection.tcp_nodelay", defaults.Tunnel.Connection.TCPNoDelay)
+	v.SetDefault("tunnel.connection.ip_version", defaults.Tunnel.Connection.IPVersion)
 	v.SetDefault("tunnel.encryption.enabled", defaults.Tunnel.Encryption.Enabled)
 	v.SetDefault("tunnel.encryption.algorithm", defaults.Tunnel.Encryption.Algorithm)
 
