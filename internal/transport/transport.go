@@ -21,7 +21,11 @@ var (
 	ErrConnectionClosed = errors.New("connection closed")
 	ErrWriteTimeout     = errors.New("write timeout")
 	ErrReadTimeout      = errors.New("read timeout")
+	ErrWriteQueueFull   = errors.New("write queue full")
 )
+
+// WriteQueueSize is the default size of the async write queue.
+const WriteQueueSize = 10000
 
 // Config holds transport configuration.
 type Config struct {
@@ -61,11 +65,13 @@ func DefaultConfig(url string) *Config {
 
 // Connection represents a WebSocket connection with health monitoring.
 type Connection struct {
-	conn     *websocket.Conn
-	config   *Config
-	mu       sync.Mutex
-	closed   bool
-	closedCh chan struct{}
+	conn       *websocket.Conn
+	config     *Config
+	mu         sync.Mutex
+	closed     bool
+	closedCh   chan struct{}
+	writeQueue chan []byte    // Async write queue for high-throughput scenarios
+	writeWg    sync.WaitGroup // Wait group for write goroutine
 }
 
 // createDialer creates a net.Dialer configured based on Config settings.
@@ -164,16 +170,48 @@ func Dial(ctx context.Context, config *Config) (*Connection, error) {
 	conn.SetReadLimit(config.MaxMessageSize)
 
 	c := &Connection{
-		conn:     conn,
-		config:   config,
-		closedCh: make(chan struct{}),
+		conn:       conn,
+		config:     config,
+		closedCh:   make(chan struct{}),
+		writeQueue: make(chan []byte, WriteQueueSize),
 	}
+
+	// Start async write goroutine
+	c.writeWg.Add(1)
+	go c.writeLoop()
 
 	return c, nil
 }
 
-// Write sends data over the connection.
-func (c *Connection) Write(data []byte) error {
+// writeLoop processes the async write queue.
+func (c *Connection) writeLoop() {
+	defer c.writeWg.Done()
+
+	for {
+		select {
+		case <-c.closedCh:
+			// Drain remaining messages before exiting
+			for {
+				select {
+				case <-c.writeQueue:
+					// Discard remaining messages
+				default:
+					return
+				}
+			}
+		case data, ok := <-c.writeQueue:
+			if !ok {
+				return
+			}
+			// Write errors are handled by returning - connection is broken
+			// Caller will detect via subsequent read/write failures
+			_ = c.writeSync(data)
+		}
+	}
+}
+
+// writeSync performs a synchronous write to the WebSocket.
+func (c *Connection) writeSync(data []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -188,6 +226,32 @@ func (c *Connection) Write(data []byte) error {
 	}
 
 	return c.conn.WriteMessage(websocket.BinaryMessage, data)
+}
+
+// Write sends data over the connection using the async write queue.
+// This prevents multiple streams from blocking each other.
+func (c *Connection) Write(data []byte) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return ErrConnectionClosed
+	}
+	c.mu.Unlock()
+
+	// Make a copy of the data since the caller may reuse the buffer
+	dataCopy := make([]byte, len(data))
+	copy(dataCopy, data)
+
+	select {
+	case c.writeQueue <- dataCopy:
+		return nil
+	case <-c.closedCh:
+		return ErrConnectionClosed
+	default:
+		// Queue is full, return error to signal back-pressure
+		// This allows the caller to handle the situation appropriately
+		return ErrWriteQueueFull
+	}
 }
 
 // Read reads data from the connection.
@@ -213,14 +277,29 @@ func (c *Connection) Read() ([]byte, error) {
 // Close closes the connection gracefully.
 func (c *Connection) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.closed {
+		c.mu.Unlock()
 		return nil
 	}
 
 	c.closed = true
 	close(c.closedCh)
+	c.mu.Unlock()
+
+	// Wait for write goroutine to finish with timeout
+	// The writeLoop should exit quickly since closedCh is closed
+	done := make(chan struct{})
+	go func() {
+		c.writeWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Write goroutine finished cleanly
+	case <-time.After(5 * time.Second):
+		// Timeout waiting for write goroutine, continue with close
+	}
 
 	// Send close message (best effort, ignore errors)
 	_ = c.conn.WriteMessage(

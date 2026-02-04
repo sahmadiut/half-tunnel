@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/internal/protocol"
 	"github.com/sahmadiut/half-tunnel/internal/session"
 )
@@ -56,7 +57,7 @@ func (m *Multiplexer) OpenStream() (uint32, error) {
 
 	streamID := atomic.AddUint32(&m.nextStreamID, 1) - 1
 	m.session.GetStream(streamID)
-	m.streamBuffers[streamID] = NewStreamBuffer(1024) // 1KB default buffer
+	m.streamBuffers[streamID] = NewStreamBuffer(constants.DefaultStreamBufferSize)
 
 	return streamID, nil
 }
@@ -93,7 +94,7 @@ func (m *Multiplexer) HandlePacket(pkt *protocol.Packet) error {
 	// Get or create buffer
 	buf, exists := m.streamBuffers[pkt.StreamID]
 	if !exists {
-		buf = NewStreamBuffer(1024)
+		buf = NewStreamBuffer(constants.DefaultStreamBufferSize)
 		m.streamBuffers[pkt.StreamID] = buf
 	}
 	m.mu.Unlock()

@@ -56,6 +56,7 @@ type Config struct {
 	ReconnectConfig  *retry.Config
 	// Connection settings
 	PingInterval     time.Duration
+	KeepaliveTimeout time.Duration // Timeout for keepalive ack responses before reconnecting
 	WriteTimeout     time.Duration
 	ReadTimeout      time.Duration
 	DialTimeout      time.Duration
@@ -87,6 +88,7 @@ func DefaultConfig() *Config {
 		ReconnectEnabled: true,
 		ReconnectConfig:  retry.DefaultConfig(),
 		PingInterval:     30 * time.Second,
+		KeepaliveTimeout: 90 * time.Second, // 3x PingInterval by default
 		WriteTimeout:     10 * time.Second,
 		ReadTimeout:      60 * time.Second,
 		DialTimeout:      10 * time.Second,
@@ -882,7 +884,12 @@ func (c *Client) keepaliveExpired() bool {
 		return false
 	}
 	ackTime := time.Unix(0, lastAck)
-	return time.Since(ackTime) > c.config.PingInterval*2
+	timeout := c.config.KeepaliveTimeout
+	if timeout <= 0 {
+		// Fallback to default if not configured: 3x ping interval
+		timeout = c.config.PingInterval * 3
+	}
+	return time.Since(ackTime) > timeout
 }
 
 func (c *Client) cleanupConnections() {

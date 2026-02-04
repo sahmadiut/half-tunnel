@@ -16,10 +16,13 @@ const (
 	MaxBufferSize = 131072 // 128KB
 
 	// DefaultChannelBufferSize is the default buffer size for connection channels.
-	DefaultChannelBufferSize = 100
+	DefaultChannelBufferSize = 1000
 
 	// DefaultMaxMessageSize is the default maximum WebSocket message size.
 	DefaultMaxMessageSize = 65536 // 64KB
+
+	// DefaultStreamBufferSize is the default buffer size for stream reassembly.
+	DefaultStreamBufferSize = 65536 // 64KB
 )
 
 // BufferMode represents the buffer size mode for connections.

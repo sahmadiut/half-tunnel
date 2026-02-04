@@ -219,3 +219,98 @@ func TestServicesRunningStateTracking(t *testing.T) {
 		t.Error("Services should not be running initially")
 	}
 }
+
+func TestKeepaliveExpired(t *testing.T) {
+	tests := []struct {
+		name             string
+		pingInterval     time.Duration
+		keepaliveTimeout time.Duration
+		lastAckAge       time.Duration
+		expected         bool
+	}{
+		{
+			name:             "no timeout when ping interval is 0",
+			pingInterval:     0,
+			keepaliveTimeout: 0,
+			lastAckAge:       time.Hour,
+			expected:         false,
+		},
+		{
+			name:             "not expired within timeout (using configured timeout)",
+			pingInterval:     10 * time.Second,
+			keepaliveTimeout: 30 * time.Second,
+			lastAckAge:       20 * time.Second,
+			expected:         false,
+		},
+		{
+			name:             "expired after timeout (using configured timeout)",
+			pingInterval:     10 * time.Second,
+			keepaliveTimeout: 30 * time.Second,
+			lastAckAge:       35 * time.Second,
+			expected:         true,
+		},
+		{
+			name:             "fallback to 3x ping interval when timeout is 0",
+			pingInterval:     10 * time.Second,
+			keepaliveTimeout: 0,
+			lastAckAge:       25 * time.Second,
+			expected:         false, // 25s < 30s (3 * 10s)
+		},
+		{
+			name:             "fallback expired after 3x ping interval",
+			pingInterval:     10 * time.Second,
+			keepaliveTimeout: 0,
+			lastAckAge:       35 * time.Second,
+			expected:         true, // 35s > 30s (3 * 10s)
+		},
+		{
+			name:             "high load scenario - 90s timeout with 10s interval",
+			pingInterval:     10 * time.Second,
+			keepaliveTimeout: 90 * time.Second,
+			lastAckAge:       60 * time.Second,
+			expected:         false, // 60s < 90s, should not timeout
+		},
+		{
+			name:             "high load scenario expired - 90s timeout with 10s interval",
+			pingInterval:     10 * time.Second,
+			keepaliveTimeout: 90 * time.Second,
+			lastAckAge:       100 * time.Second,
+			expected:         true, // 100s > 90s, should timeout
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultConfig()
+			config.PingInterval = tt.pingInterval
+			config.KeepaliveTimeout = tt.keepaliveTimeout
+
+			client := New(config, nil)
+
+			// Set the last keepalive ack time
+			if tt.lastAckAge > 0 && tt.pingInterval > 0 {
+				lastAckTime := time.Now().Add(-tt.lastAckAge)
+				client.lastKeepAliveAck = lastAckTime.UnixNano()
+			}
+
+			result := client.keepaliveExpired()
+			if result != tt.expected {
+				t.Errorf("keepaliveExpired() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDefaultKeepaliveTimeout(t *testing.T) {
+	config := DefaultConfig()
+
+	// Default keepalive timeout should be 90 seconds (3x 30s ping interval)
+	if config.KeepaliveTimeout != 90*time.Second {
+		t.Errorf("Expected default keepalive timeout 90s, got %s", config.KeepaliveTimeout)
+	}
+
+	// Default ping interval should be 30 seconds
+	if config.PingInterval != 30*time.Second {
+		t.Errorf("Expected default ping interval 30s, got %s", config.PingInterval)
+	}
+}
