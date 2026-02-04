@@ -120,9 +120,8 @@ type Client struct {
 	streamConns   map[uint32]*streamConn
 	streamConnsMu sync.RWMutex
 
-	// Connection metrics
-	metrics   ConnectionMetrics
-	metricsMu sync.RWMutex
+	// Connection metrics (using atomic operations for performance)
+	metrics ConnectionMetrics
 
 	// Log rate limiting for unknown stream warnings
 	unknownStreamLogCount int64
@@ -643,6 +642,7 @@ func (c *Client) handleConnect(ctx context.Context, req *socks5.ConnectRequest) 
 // forwardClientToUpstream forwards data from the client to upstream.
 func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 	buf := make([]byte, constants.DefaultBufferSize)
+	const readTimeout = 5 * time.Minute
 
 	for {
 		select {
@@ -657,9 +657,32 @@ func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 		default:
 		}
 
+		// Set a read deadline to prevent stuck goroutines
+		// This is called at the start of each iteration, so after a timeout
+		// and continue, the deadline is refreshed before the next read
+		if conn, ok := sc.conn.(interface{ SetReadDeadline(time.Time) error }); ok {
+			if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
+				c.log.Debug().Err(err).
+					Uint32("stream_id", sc.streamID).
+					Msg("Failed to set read deadline")
+			}
+		}
+
 		n, err := sc.conn.Read(buf)
 		if err != nil {
 			if err != io.EOF {
+				// Check if it's a timeout error - if so, check if stream is still valid
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// Check if stream is still in our map (active)
+					c.streamConnsMu.RLock()
+					_, stillActive := c.streamConns[sc.streamID]
+					c.streamConnsMu.RUnlock()
+					if stillActive {
+						// Stream is still active, continue reading
+						// The deadline will be refreshed at the top of the next iteration
+						continue
+					}
+				}
 				c.log.Debug().Err(err).
 					Uint32("stream_id", sc.streamID).
 					Msg("Error reading from client")
@@ -1166,12 +1189,10 @@ func (c *Client) logMetricsPeriodically(ctx context.Context) {
 
 // logMetrics logs current connection metrics.
 func (c *Client) logMetrics() {
-	c.metricsMu.RLock()
-	bytesSent := c.metrics.BytesSent
-	bytesReceived := c.metrics.BytesReceived
-	packetsSent := c.metrics.PacketsSent
-	packetsReceived := c.metrics.PacketsReceived
-	c.metricsMu.RUnlock()
+	bytesSent := atomic.LoadInt64(&c.metrics.BytesSent)
+	bytesReceived := atomic.LoadInt64(&c.metrics.BytesReceived)
+	packetsSent := atomic.LoadInt64(&c.metrics.PacketsSent)
+	packetsReceived := atomic.LoadInt64(&c.metrics.PacketsReceived)
 
 	c.streamConnsMu.RLock()
 	activeStreams := len(c.streamConns)
@@ -1186,18 +1207,14 @@ func (c *Client) logMetrics() {
 		Msg("Connection metrics")
 }
 
-// recordPacketReceived increments the packets received counter.
+// recordPacketReceived increments the packets received counter using atomic operations.
 func (c *Client) recordPacketReceived(bytes int64) {
-	c.metricsMu.Lock()
-	c.metrics.PacketsReceived++
-	c.metrics.BytesReceived += bytes
-	c.metricsMu.Unlock()
+	atomic.AddInt64(&c.metrics.PacketsReceived, 1)
+	atomic.AddInt64(&c.metrics.BytesReceived, bytes)
 }
 
-// recordPacketSent increments the packets sent counter.
+// recordPacketSent increments the packets sent counter using atomic operations.
 func (c *Client) recordPacketSent(bytes int64) {
-	c.metricsMu.Lock()
-	c.metrics.PacketsSent++
-	c.metrics.BytesSent += bytes
-	c.metricsMu.Unlock()
+	atomic.AddInt64(&c.metrics.PacketsSent, 1)
+	atomic.AddInt64(&c.metrics.BytesSent, bytes)
 }

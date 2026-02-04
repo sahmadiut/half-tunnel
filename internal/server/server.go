@@ -97,9 +97,8 @@ type Server struct {
 	natTable   map[natKey]*natEntry
 	natTableMu sync.RWMutex
 
-	// Connection metrics
-	metrics   ConnectionMetrics
-	metricsMu sync.RWMutex
+	// Connection metrics (using atomic operations for performance)
+	metrics ConnectionMetrics
 
 	// State
 	running  int32
@@ -115,9 +114,10 @@ type natKey struct {
 
 // natEntry holds the destination connection for a stream.
 type natEntry struct {
-	conn     net.Conn
-	destAddr string
-	created  time.Time
+	conn         net.Conn
+	destAddr     string
+	created      time.Time
+	lastActivity int64 // Unix timestamp of last activity (atomic)
 }
 
 // ConnectionMetrics holds metrics for monitoring data transfer.
@@ -234,6 +234,10 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start periodic metrics logging
 	s.wg.Add(1)
 	go s.logMetricsPeriodically(ctx)
+
+	// Start periodic NAT table cleanup
+	s.wg.Add(1)
+	go s.cleanupStaleNatEntries(ctx)
 
 	return nil
 }
@@ -517,9 +521,10 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 		// Register in NAT table
 		key := natKey{SessionID: pkt.SessionID, StreamID: pkt.StreamID}
 		entry := &natEntry{
-			conn:     conn,
-			destAddr: destAddr,
-			created:  time.Now(),
+			conn:         conn,
+			destAddr:     destAddr,
+			created:      time.Now(),
+			lastActivity: time.Now().Unix(),
 		}
 
 		s.natTableMu.Lock()
@@ -563,6 +568,9 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 			return
 		}
 
+		// Update last activity timestamp
+		atomic.StoreInt64(&entry.lastActivity, time.Now().Unix())
+
 		if _, err := entry.conn.Write(pkt.Payload); err != nil {
 			s.log.Error().Err(err).
 				Uint32("stream_id", pkt.StreamID).
@@ -577,6 +585,18 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 	defer s.closeNatEntry(sessionID, streamID)
 
 	buf := make([]byte, constants.DefaultBufferSize)
+	key := natKey{SessionID: sessionID, StreamID: streamID}
+
+	// Get the NAT entry once at the start - the pointer is stable once created
+	s.natTableMu.RLock()
+	entry, entryExists := s.natTable[key]
+	s.natTableMu.RUnlock()
+
+	// Calculate read deadline once (2x session timeout, minimum 5 minutes)
+	readDeadline := 2 * s.config.SessionTimeout
+	if readDeadline < 5*time.Minute {
+		readDeadline = 5 * time.Minute
+	}
 
 	for {
 		select {
@@ -585,6 +605,13 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 		case <-s.shutdown:
 			return
 		default:
+		}
+
+		// Set read deadline to prevent stuck goroutines
+		if err := destConn.SetReadDeadline(time.Now().Add(readDeadline)); err != nil {
+			s.log.Debug().Err(err).
+				Uint32("stream_id", streamID).
+				Msg("Failed to set read deadline")
 		}
 
 		n, err := destConn.Read(buf)
@@ -600,6 +627,11 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 		}
 
 		if n > 0 {
+			// Update last activity timestamp for NAT entry (using cached pointer)
+			if entryExists && entry != nil {
+				atomic.StoreInt64(&entry.lastActivity, time.Now().Unix())
+			}
+
 			// Per-packet DEBUG logging (see package doc for performance notes)
 			s.log.Debug().
 				Uint32("stream_id", streamID).
@@ -738,12 +770,10 @@ func (s *Server) logMetricsPeriodically(ctx context.Context) {
 
 // logMetrics logs current connection metrics.
 func (s *Server) logMetrics() {
-	s.metricsMu.RLock()
-	bytesSent := s.metrics.BytesSent
-	bytesReceived := s.metrics.BytesReceived
-	packetsSent := s.metrics.PacketsSent
-	packetsReceived := s.metrics.PacketsReceived
-	s.metricsMu.RUnlock()
+	bytesSent := atomic.LoadInt64(&s.metrics.BytesSent)
+	bytesReceived := atomic.LoadInt64(&s.metrics.BytesReceived)
+	packetsSent := atomic.LoadInt64(&s.metrics.PacketsSent)
+	packetsReceived := atomic.LoadInt64(&s.metrics.PacketsReceived)
 
 	activeStreams := s.GetNatEntryCount()
 	activeSessions := s.GetSessionCount()
@@ -758,18 +788,69 @@ func (s *Server) logMetrics() {
 		Msg("Connection metrics")
 }
 
-// recordPacketReceived increments the packets received counter.
+// recordPacketReceived increments the packets received counter using atomic operations.
 func (s *Server) recordPacketReceived(bytes int64) {
-	s.metricsMu.Lock()
-	s.metrics.PacketsReceived++
-	s.metrics.BytesReceived += bytes
-	s.metricsMu.Unlock()
+	atomic.AddInt64(&s.metrics.PacketsReceived, 1)
+	atomic.AddInt64(&s.metrics.BytesReceived, bytes)
 }
 
-// recordPacketSent increments the packets sent counter.
+// recordPacketSent increments the packets sent counter using atomic operations.
 func (s *Server) recordPacketSent(bytes int64) {
-	s.metricsMu.Lock()
-	s.metrics.PacketsSent++
-	s.metrics.BytesSent += bytes
-	s.metricsMu.Unlock()
+	atomic.AddInt64(&s.metrics.PacketsSent, 1)
+	atomic.AddInt64(&s.metrics.BytesSent, bytes)
+}
+
+// cleanupStaleNatEntries periodically removes stale NAT entries that have been
+// inactive for longer than the session timeout. This prevents resource leaks
+// when streams are not properly closed.
+func (s *Server) cleanupStaleNatEntries(ctx context.Context) {
+	defer s.wg.Done()
+
+	// Run cleanup every minute
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.shutdown:
+			return
+		case <-ticker.C:
+			s.doNatCleanup()
+		}
+	}
+}
+
+// doNatCleanup removes NAT entries that have been inactive for too long.
+func (s *Server) doNatCleanup() {
+	staleThreshold := s.config.SessionTimeout
+	if staleThreshold < 5*time.Minute {
+		staleThreshold = 5 * time.Minute
+	}
+
+	now := time.Now().Unix()
+	var staleKeys []natKey
+
+	// First pass: identify stale entries (read lock)
+	s.natTableMu.RLock()
+	for key, entry := range s.natTable {
+		lastActivity := atomic.LoadInt64(&entry.lastActivity)
+		if lastActivity > 0 && now-lastActivity > int64(staleThreshold.Seconds()) {
+			staleKeys = append(staleKeys, key)
+		}
+	}
+	s.natTableMu.RUnlock()
+
+	// Second pass: remove stale entries
+	if len(staleKeys) > 0 {
+		s.log.Info().
+			Int("count", len(staleKeys)).
+			Dur("threshold", staleThreshold).
+			Msg("Cleaning up stale NAT entries")
+
+		for _, key := range staleKeys {
+			s.closeNatEntry(key.SessionID, key.StreamID)
+		}
+	}
 }
