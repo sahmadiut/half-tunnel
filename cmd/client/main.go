@@ -156,8 +156,6 @@ func main() {
 	}
 	clientConfig.UpstreamTLS = upstreamTLS
 	clientConfig.DownstreamTLS = downstreamTLS
-	clientConfig.UpstreamResolveIP = cfg.Client.Upstream.ResolveIP
-	clientConfig.DownstreamResolveIP = cfg.Client.Downstream.ResolveIP
 
 	// Create and start the client
 	c := client.New(clientConfig, log)

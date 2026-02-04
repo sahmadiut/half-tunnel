@@ -597,6 +597,11 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 	s.natTableMu.RUnlock()
 
 	readDeadline := 30 * time.Second
+	// Use DialTimeout as an operator-provided upper bound for destination stalls
+	// when a dedicated read timeout is not configured.
+	if s.config.DialTimeout > readDeadline {
+		readDeadline = s.config.DialTimeout
+	}
 
 	for {
 		select {
