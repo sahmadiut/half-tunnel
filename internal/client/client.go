@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -54,6 +55,10 @@ type Config struct {
 	ReadTimeout      time.Duration
 	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
+	UpstreamTLS      *tls.Config
+	DownstreamTLS    *tls.Config
+	ReadBufferSize   int
+	WriteBufferSize  int
 }
 
 // DefaultConfig returns default client configuration.
@@ -71,6 +76,8 @@ func DefaultConfig() *Config {
 		ReadTimeout:      60 * time.Second,
 		DialTimeout:      10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,
+		ReadBufferSize:   constants.DefaultBufferSize,
+		WriteBufferSize:  constants.DefaultBufferSize,
 	}
 }
 
@@ -121,6 +128,12 @@ func New(config *Config, log *logger.Logger) *Client {
 	}
 	if config.ReconnectConfig == nil {
 		config.ReconnectConfig = retry.DefaultConfig()
+	}
+	if config.ReadBufferSize <= 0 {
+		config.ReadBufferSize = constants.DefaultBufferSize
+	}
+	if config.WriteBufferSize <= 0 {
+		config.WriteBufferSize = constants.DefaultBufferSize
 	}
 
 	return &Client{
@@ -544,17 +557,26 @@ func (c *Client) connect(ctx context.Context) error {
 	upstreamConfig.HandshakeTimeout = c.config.HandshakeTimeout
 	upstreamConfig.WriteTimeout = c.config.WriteTimeout
 	upstreamConfig.ReadTimeout = c.config.ReadTimeout
+	upstreamConfig.TLSConfig = c.config.UpstreamTLS
+	upstreamConfig.ReadBufferSize = c.config.ReadBufferSize
+	upstreamConfig.WriteBufferSize = c.config.WriteBufferSize
 
 	downstreamConfig := transport.DefaultConfig(c.config.DownstreamURL)
 	downstreamConfig.HandshakeTimeout = c.config.HandshakeTimeout
 	downstreamConfig.ReadTimeout = c.config.ReadTimeout
 	downstreamConfig.WriteTimeout = c.config.WriteTimeout
+	downstreamConfig.TLSConfig = c.config.DownstreamTLS
+	downstreamConfig.ReadBufferSize = c.config.ReadBufferSize
+	downstreamConfig.WriteBufferSize = c.config.WriteBufferSize
 
 	upstreamCtx, upstreamCancel := c.dialContext(ctx)
 	defer upstreamCancel()
 
 	upstream, err := dialTransport(upstreamCtx, upstreamConfig)
 	if err != nil {
+		c.log.Error().Err(err).
+			Str("url", c.config.UpstreamURL).
+			Msg("Upstream dial failed")
 		return fmt.Errorf("failed to connect to upstream: %w", err)
 	}
 
@@ -563,6 +585,9 @@ func (c *Client) connect(ctx context.Context) error {
 
 	downstream, err := dialTransport(downstreamCtx, downstreamConfig)
 	if err != nil {
+		c.log.Error().Err(err).
+			Str("url", c.config.DownstreamURL).
+			Msg("Downstream dial failed")
 		upstream.Close()
 		return fmt.Errorf("failed to connect to downstream: %w", err)
 	}
@@ -575,13 +600,16 @@ func (c *Client) connect(ctx context.Context) error {
 
 	c.log.Info().
 		Str("url", c.config.UpstreamURL).
+		Str("remote_addr", upstream.RemoteAddr()).
 		Msg("Connected to upstream")
 
 	c.log.Info().
 		Str("url", c.config.DownstreamURL).
+		Str("remote_addr", downstream.RemoteAddr()).
 		Msg("Connected to downstream")
 
 	if err := c.sendHandshake(); err != nil {
+		c.log.Error().Err(err).Msg("Handshake failed")
 		c.cleanupConnections()
 		return fmt.Errorf("failed to send handshake: %w", err)
 	}

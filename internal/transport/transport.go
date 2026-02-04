@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 )
 
 // Errors
@@ -30,6 +31,8 @@ type Config struct {
 	ReadTimeout      time.Duration
 	MaxMessageSize   int64
 	HandshakeTimeout time.Duration
+	ReadBufferSize   int
+	WriteBufferSize  int
 }
 
 // DefaultConfig returns a Config with sensible defaults.
@@ -42,6 +45,8 @@ func DefaultConfig(url string) *Config {
 		ReadTimeout:      60 * time.Second,
 		MaxMessageSize:   1024 * 1024, // 1MB
 		HandshakeTimeout: 10 * time.Second,
+		ReadBufferSize:   constants.DefaultBufferSize,
+		WriteBufferSize:  constants.DefaultBufferSize,
 	}
 }
 
@@ -59,6 +64,12 @@ func Dial(ctx context.Context, config *Config) (*Connection, error) {
 	dialer := websocket.Dialer{
 		TLSClientConfig:  config.TLSConfig,
 		HandshakeTimeout: config.HandshakeTimeout,
+	}
+	if config.ReadBufferSize > 0 {
+		dialer.ReadBufferSize = config.ReadBufferSize
+	}
+	if config.WriteBufferSize > 0 {
+		dialer.WriteBufferSize = config.WriteBufferSize
 	}
 
 	conn, _, err := dialer.DialContext(ctx, config.URL, http.Header{})
@@ -146,6 +157,14 @@ func (c *Connection) IsClosed() bool {
 // ClosedChan returns a channel that is closed when the connection is closed.
 func (c *Connection) ClosedChan() <-chan struct{} {
 	return c.closedCh
+}
+
+// RemoteAddr returns the remote address for the connection.
+func (c *Connection) RemoteAddr() string {
+	if c == nil || c.conn == nil {
+		return ""
+	}
+	return c.conn.RemoteAddr().String()
 }
 
 // Transport defines the interface for split-path transports.

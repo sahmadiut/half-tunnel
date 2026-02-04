@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"net/http"
@@ -129,6 +131,8 @@ func main() {
 		ReadTimeout:      readTimeout,
 		DialTimeout:      cfg.Tunnel.Connection.DialTimeout,
 		HandshakeTimeout: cfg.Tunnel.Connection.DialTimeout,
+		ReadBufferSize:   cfg.Tunnel.Connection.ReadBufferSize,
+		WriteBufferSize:  cfg.Tunnel.Connection.WriteBufferSize,
 	}
 
 	// Set SOCKS5 authentication if enabled
@@ -136,6 +140,19 @@ func main() {
 		clientConfig.SOCKS5Username = cfg.SOCKS5.Auth.Username
 		clientConfig.SOCKS5Password = cfg.SOCKS5.Auth.Password
 	}
+
+	upstreamTLS, err := loadTLSConfig(cfg.Client.Upstream.TLS.Enabled, cfg.Client.Upstream.TLS.SkipVerify, cfg.Client.Upstream.TLS.CAFile)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load upstream TLS configuration")
+		os.Exit(1)
+	}
+	downstreamTLS, err := loadTLSConfig(cfg.Client.Downstream.TLS.Enabled, cfg.Client.Downstream.TLS.SkipVerify, cfg.Client.Downstream.TLS.CAFile)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to load downstream TLS configuration")
+		os.Exit(1)
+	}
+	clientConfig.UpstreamTLS = upstreamTLS
+	clientConfig.DownstreamTLS = downstreamTLS
 
 	// Create and start the client
 	c := client.New(clientConfig, log)

@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
 
 func TestServerHandler(t *testing.T) {
-	handler := NewServerHandler(nil)
+	handler := NewServerHandler(nil, logger.NewDefault())
 
 	// Create test server
 	server := httptest.NewServer(handler)
@@ -58,7 +59,7 @@ func TestServerHandler(t *testing.T) {
 }
 
 func TestServerHandlerClosed(t *testing.T) {
-	handler := NewServerHandler(nil)
+	handler := NewServerHandler(nil, logger.NewDefault())
 	handler.Close()
 
 	// Create test server
