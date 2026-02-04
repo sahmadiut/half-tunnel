@@ -60,6 +60,17 @@ tunnel:
     enabled: true
     algorithm: "aes-256-gcm"  # Options: aes-256-gcm, chacha20-poly1305
 
+# Chisel tunnel settings (server side)
+# When enabled, chisel servers listen for incoming chisel client connections
+# and forward traffic to the actual upstream/downstream handlers.
+# Host and TLS settings are derived from the existing upstream/downstream configuration.
+chisel:
+  enabled: false
+  # Port for upstream chisel server to listen on
+  upstream_port: 9000
+  # Port for downstream chisel server to listen on
+  downstream_port: 9001
+
 # Logging
 logging:
   level: "info"             # debug, info, warn, error

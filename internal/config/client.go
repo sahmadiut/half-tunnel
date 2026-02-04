@@ -17,9 +17,20 @@ type ClientConfig struct {
 	PortForwards  []interface{}      `mapstructure:"port_forwards"`
 	SOCKS5        SOCKS5Config       `mapstructure:"socks5"`
 	Tunnel        ClientTunnelConfig `mapstructure:"tunnel"`
+	Chisel        ChiselConfig       `mapstructure:"chisel"`
 	DNS           DNSConfig          `mapstructure:"dns"`
 	Logging       LoggingConfig      `mapstructure:"logging"`
 	Observability ClientObservConfig `mapstructure:"observability"`
+}
+
+// ChiselConfig holds chisel tunnel configuration for WebSocket-based transport.
+// When enabled, chisel is used as the transport layer instead of direct WebSocket connections.
+// One chisel tunnel is used for upstream (client->server) and one for downstream (server->client).
+// The server host is derived from the existing upstream/downstream URLs.
+type ChiselConfig struct {
+	Enabled        bool `mapstructure:"enabled"`
+	UpstreamPort   int  `mapstructure:"upstream_port"`   // Port for upstream chisel tunnel
+	DownstreamPort int  `mapstructure:"downstream_port"` // Port for downstream chisel tunnel
 }
 
 // ClientSettings holds client-specific settings.
@@ -166,6 +177,11 @@ func DefaultClientConfig() *ClientConfig {
 				Algorithm: "aes-256-gcm",
 			},
 		},
+		Chisel: ChiselConfig{
+			Enabled:        false,
+			UpstreamPort:   9000,  // Default port for upstream chisel tunnel
+			DownstreamPort: 9001,  // Default port for downstream chisel tunnel
+		},
 		DNS: DNSConfig{
 			Enabled:         false,
 			ListenHost:      "127.0.0.1",
@@ -269,6 +285,10 @@ func setClientDefaults(v *viper.Viper) {
 	v.SetDefault("tunnel.connection.ip_version", defaults.Tunnel.Connection.IPVersion)
 	v.SetDefault("tunnel.encryption.enabled", defaults.Tunnel.Encryption.Enabled)
 	v.SetDefault("tunnel.encryption.algorithm", defaults.Tunnel.Encryption.Algorithm)
+
+	v.SetDefault("chisel.enabled", defaults.Chisel.Enabled)
+	v.SetDefault("chisel.upstream_port", defaults.Chisel.UpstreamPort)
+	v.SetDefault("chisel.downstream_port", defaults.Chisel.DownstreamPort)
 
 	v.SetDefault("dns.enabled", defaults.DNS.Enabled)
 	v.SetDefault("dns.listen_host", defaults.DNS.ListenHost)
@@ -609,6 +629,16 @@ func (c *ClientConfig) Validate() error {
 	if c.DNS.Enabled {
 		if c.DNS.ListenPort <= 0 || c.DNS.ListenPort > 65535 {
 			return fmt.Errorf("invalid DNS port: %d", c.DNS.ListenPort)
+		}
+	}
+
+	// Validate chisel configuration
+	if c.Chisel.Enabled {
+		if c.Chisel.UpstreamPort <= 0 || c.Chisel.UpstreamPort > 65535 {
+			return fmt.Errorf("invalid chisel upstream port: %d", c.Chisel.UpstreamPort)
+		}
+		if c.Chisel.DownstreamPort <= 0 || c.Chisel.DownstreamPort > 65535 {
+			return fmt.Errorf("invalid chisel downstream port: %d", c.Chisel.DownstreamPort)
 		}
 	}
 

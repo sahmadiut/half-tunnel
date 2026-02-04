@@ -90,6 +90,33 @@ func TestServerConfigValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "valid chisel config",
+			modify: func(c *ServerConfig) {
+				c.Chisel.Enabled = true
+				c.Chisel.UpstreamPort = 9000
+				c.Chisel.DownstreamPort = 9001
+			},
+			wantErr: false,
+		},
+		{
+			name: "chisel enabled with invalid upstream port",
+			modify: func(c *ServerConfig) {
+				c.Chisel.Enabled = true
+				c.Chisel.UpstreamPort = 0
+				c.Chisel.DownstreamPort = 9001
+			},
+			wantErr: true,
+		},
+		{
+			name: "chisel enabled with invalid downstream port",
+			modify: func(c *ServerConfig) {
+				c.Chisel.Enabled = true
+				c.Chisel.UpstreamPort = 9000
+				c.Chisel.DownstreamPort = 70000
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

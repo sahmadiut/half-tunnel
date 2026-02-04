@@ -93,6 +93,17 @@ tunnel:
     enabled: true
     algorithm: "aes-256-gcm"
 
+# Chisel tunnel settings
+# When enabled, data is transferred through a chisel WebSocket tunnel
+# instead of direct WebSocket connections. This provides better performance
+# in some network conditions. The server host is derived from the upstream/downstream URLs.
+chisel:
+  enabled: false
+  # Port for upstream chisel tunnel (client connects to server's chisel on this port)
+  upstream_port: 9000
+  # Port for downstream chisel tunnel (client connects to server's chisel on this port)
+  downstream_port: 9001
+
 # DNS settings (for full VPN mode)
 dns:
   enabled: false

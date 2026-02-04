@@ -15,8 +15,19 @@ type ServerConfig struct {
 	Server        ServerSettings     `mapstructure:"server"`
 	Access        AccessConfig       `mapstructure:"access"`
 	Tunnel        ServerTunnelConfig `mapstructure:"tunnel"`
+	Chisel        ChiselServerConfig `mapstructure:"chisel"`
 	Logging       LoggingConfig      `mapstructure:"logging"`
 	Observability ObservConfig       `mapstructure:"observability"`
+}
+
+// ChiselServerConfig holds chisel tunnel configuration for server side.
+// When enabled, chisel server listens for incoming chisel client connections and forwards
+// traffic to the actual upstream/downstream handlers.
+// Host and TLS settings are derived from the existing upstream/downstream configuration.
+type ChiselServerConfig struct {
+	Enabled        bool `mapstructure:"enabled"`
+	UpstreamPort   int  `mapstructure:"upstream_port"`   // Port for upstream chisel server to listen on
+	DownstreamPort int  `mapstructure:"downstream_port"` // Port for downstream chisel server to listen on
 }
 
 // ServerSettings holds server-specific settings.
@@ -153,6 +164,11 @@ func DefaultServerConfig() *ServerConfig {
 				Algorithm: "aes-256-gcm",
 			},
 		},
+		Chisel: ChiselServerConfig{
+			Enabled:        false,
+			UpstreamPort:   9000,  // Default port for upstream chisel server
+			DownstreamPort: 9001,  // Default port for downstream chisel server
+		},
 		Logging: LoggingConfig{
 			Level:  "info",
 			Format: "json",
@@ -250,6 +266,10 @@ func setServerDefaults(v *viper.Viper) {
 	v.SetDefault("tunnel.encryption.enabled", defaults.Tunnel.Encryption.Enabled)
 	v.SetDefault("tunnel.encryption.algorithm", defaults.Tunnel.Encryption.Algorithm)
 
+	v.SetDefault("chisel.enabled", defaults.Chisel.Enabled)
+	v.SetDefault("chisel.upstream_port", defaults.Chisel.UpstreamPort)
+	v.SetDefault("chisel.downstream_port", defaults.Chisel.DownstreamPort)
+
 	v.SetDefault("logging.level", defaults.Logging.Level)
 	v.SetDefault("logging.format", defaults.Logging.Format)
 	v.SetDefault("logging.output", defaults.Logging.Output)
@@ -284,6 +304,15 @@ func (c *ServerConfig) Validate() error {
 		}
 		if c.Server.Downstream.TLS.KeyFile == "" {
 			return fmt.Errorf("downstream TLS enabled but key_file not specified")
+		}
+	}
+	// Validate chisel configuration
+	if c.Chisel.Enabled {
+		if c.Chisel.UpstreamPort <= 0 || c.Chisel.UpstreamPort > 65535 {
+			return fmt.Errorf("invalid chisel upstream port: %d", c.Chisel.UpstreamPort)
+		}
+		if c.Chisel.DownstreamPort <= 0 || c.Chisel.DownstreamPort > 65535 {
+			return fmt.Errorf("invalid chisel downstream port: %d", c.Chisel.DownstreamPort)
 		}
 	}
 	if c.Tunnel.Encryption.Enabled {
