@@ -484,6 +484,8 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 
 	// Write data to the client connection
 	if pkt.IsData() && len(pkt.Payload) > 0 {
+		// Note: Debug logging for each packet is intentional for troubleshooting.
+		// In production, use INFO or higher log level to avoid performance impact.
 		c.log.Debug().
 			Uint32("stream_id", pkt.StreamID).
 			Int("bytes", len(pkt.Payload)).
@@ -614,6 +616,8 @@ func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 		}
 
 		if n > 0 {
+			// Note: Debug logging for each packet is intentional for troubleshooting.
+			// In production, use INFO or higher log level to avoid performance impact.
 			c.log.Debug().
 				Uint32("stream_id", sc.streamID).
 				Int("bytes", n).

@@ -539,6 +539,8 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 
 	// Handle data packets - forward to destination
 	if pkt.IsData() && len(pkt.Payload) > 0 {
+		// Note: Debug logging for each packet is intentional for troubleshooting.
+		// In production, use INFO or higher log level to avoid performance impact.
 		s.log.Debug().
 			Uint32("stream_id", pkt.StreamID).
 			Int("bytes", len(pkt.Payload)).
@@ -594,6 +596,8 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 		}
 
 		if n > 0 {
+			// Note: Debug logging for each packet is intentional for troubleshooting.
+			// In production, use INFO or higher log level to avoid performance impact.
 			s.log.Debug().
 				Uint32("stream_id", streamID).
 				Int("bytes", n).
