@@ -103,9 +103,15 @@ func (h *ServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		conn: conn,
 		config: &Config{
 			MaxMessageSize: h.config.MaxMessageSize,
+			WriteTimeout:   10 * time.Second, // Default write timeout
 		},
-		closedCh: make(chan struct{}),
+		closedCh:   make(chan struct{}),
+		writeQueue: make(chan []byte, WriteQueueSize),
 	}
+
+	// Start async write goroutine
+	c.writeWg.Add(1)
+	go c.writeLoop()
 
 	// Non-blocking send to connection channel, or drop if closed
 	select {
