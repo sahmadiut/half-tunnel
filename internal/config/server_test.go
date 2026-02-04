@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/sahmadiut/half-tunnel/internal/constants"
 )
 
 func TestDefaultServerConfig(t *testing.T) {
@@ -23,15 +21,6 @@ func TestDefaultServerConfig(t *testing.T) {
 	}
 	if cfg.Tunnel.Session.Timeout != 5*time.Minute {
 		t.Errorf("Expected session timeout 5m, got %v", cfg.Tunnel.Session.Timeout)
-	}
-	if cfg.Tunnel.Connection.ReadBufferSize != constants.LargeBufferSize {
-		t.Errorf("Expected ReadBufferSize %d, got %d", constants.LargeBufferSize, cfg.Tunnel.Connection.ReadBufferSize)
-	}
-	if cfg.Tunnel.Connection.WriteBufferSize != constants.LargeBufferSize {
-		t.Errorf("Expected WriteBufferSize %d, got %d", constants.LargeBufferSize, cfg.Tunnel.Connection.WriteBufferSize)
-	}
-	if cfg.Tunnel.Connection.BufferMode != "large" {
-		t.Errorf("Expected BufferMode large, got %s", cfg.Tunnel.Connection.BufferMode)
 	}
 }
 

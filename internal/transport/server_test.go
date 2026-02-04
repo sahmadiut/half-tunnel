@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/pkg/logger"
 )
 
@@ -81,11 +80,11 @@ func TestServerHandlerClosed(t *testing.T) {
 func TestDefaultServerConfig(t *testing.T) {
 	config := DefaultServerConfig()
 
-	if config.ReadBufferSize != constants.DefaultBufferSize {
-		t.Errorf("Expected ReadBufferSize %d, got %d", constants.DefaultBufferSize, config.ReadBufferSize)
+	if config.ReadBufferSize != 32768 {
+		t.Errorf("Expected ReadBufferSize 32768, got %d", config.ReadBufferSize)
 	}
-	if config.WriteBufferSize != constants.DefaultBufferSize {
-		t.Errorf("Expected WriteBufferSize %d, got %d", constants.DefaultBufferSize, config.WriteBufferSize)
+	if config.WriteBufferSize != 32768 {
+		t.Errorf("Expected WriteBufferSize 32768, got %d", config.WriteBufferSize)
 	}
 	if config.MaxMessageSize != 1024*1024 {
 		t.Errorf("Expected MaxMessageSize 1MB, got %d", config.MaxMessageSize)

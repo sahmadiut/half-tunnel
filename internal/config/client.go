@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/spf13/viper"
 )
 
@@ -93,9 +92,9 @@ type ClientConnectionConfig struct {
 	KeepaliveInterval time.Duration `mapstructure:"keepalive_interval"`
 	KeepaliveTimeout  time.Duration `mapstructure:"keepalive_timeout"` // Timeout for keepalive ack responses
 	DialTimeout       time.Duration `mapstructure:"dial_timeout"`
-	BufferMode        string        `mapstructure:"buffer_mode"` // small, default, large, max
-	TCPNoDelay        bool          `mapstructure:"tcp_nodelay"` // Disable Nagle's algorithm
-	IPVersion         string        `mapstructure:"ip_version"`  // "4", "6", or "" for auto
+	BufferMode        string        `mapstructure:"buffer_mode"`  // small, default, large, max
+	TCPNoDelay        bool          `mapstructure:"tcp_nodelay"`  // Disable Nagle's algorithm
+	IPVersion         string        `mapstructure:"ip_version"`   // "4", "6", or "" for auto
 }
 
 // DNSConfig holds DNS settings for VPN mode.
@@ -153,12 +152,12 @@ func DefaultClientConfig() *ClientConfig {
 				Jitter:       0.1,
 			},
 			Connection: ClientConnectionConfig{
-				ReadBufferSize:    constants.LargeBufferSize,
-				WriteBufferSize:   constants.LargeBufferSize,
+				ReadBufferSize:    32768,
+				WriteBufferSize:   32768,
 				KeepaliveInterval: 30 * time.Second,
 				KeepaliveTimeout:  90 * time.Second, // 3x keepalive interval by default
 				DialTimeout:       10 * time.Second,
-				BufferMode:        "large",
+				BufferMode:        "default",
 				TCPNoDelay:        true,
 				IPVersion:         "", // auto
 			},

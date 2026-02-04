@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/sahmadiut/half-tunnel/internal/config"
-	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/internal/health"
 	"github.com/sahmadiut/half-tunnel/internal/metrics"
 	"github.com/sahmadiut/half-tunnel/internal/server"
@@ -98,7 +97,6 @@ func main() {
 		WriteBufferSize: cfg.Tunnel.Connection.WriteBufferSize,
 		MaxMessageSize:  cfg.Tunnel.Connection.MaxMessageSize,
 		DialTimeout:     cfg.Tunnel.Connection.KeepaliveInterval,
-		BufferMode:      constants.BufferMode(cfg.Tunnel.Connection.BufferMode),
 	}
 
 	// Create and start the server

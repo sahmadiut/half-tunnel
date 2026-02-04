@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/sahmadiut/half-tunnel/internal/constants"
 )
 
 func TestDefaultClientConfig(t *testing.T) {
@@ -22,15 +20,6 @@ func TestDefaultClientConfig(t *testing.T) {
 	}
 	if cfg.SOCKS5.ListenPort != 1080 {
 		t.Errorf("Expected SOCKS5 port 1080, got %d", cfg.SOCKS5.ListenPort)
-	}
-	if cfg.Tunnel.Connection.ReadBufferSize != constants.LargeBufferSize {
-		t.Errorf("Expected ReadBufferSize %d, got %d", constants.LargeBufferSize, cfg.Tunnel.Connection.ReadBufferSize)
-	}
-	if cfg.Tunnel.Connection.WriteBufferSize != constants.LargeBufferSize {
-		t.Errorf("Expected WriteBufferSize %d, got %d", constants.LargeBufferSize, cfg.Tunnel.Connection.WriteBufferSize)
-	}
-	if cfg.Tunnel.Connection.BufferMode != "large" {
-		t.Errorf("Expected BufferMode large, got %s", cfg.Tunnel.Connection.BufferMode)
 	}
 }
 

@@ -93,8 +93,8 @@ func DefaultConfig() *Config {
 		ReadTimeout:      60 * time.Second,
 		DialTimeout:      10 * time.Second,
 		HandshakeTimeout: 10 * time.Second,
-		ReadBufferSize:   constants.LargeBufferSize,
-		WriteBufferSize:  constants.LargeBufferSize,
+		ReadBufferSize:   constants.DefaultBufferSize,
+		WriteBufferSize:  constants.DefaultBufferSize,
 		TCPNoDelay:       true,
 		DataFlowMonitor:  DefaultDataFlowMonitorConfig(),
 	}
@@ -641,7 +641,7 @@ func (c *Client) handleConnect(ctx context.Context, req *socks5.ConnectRequest) 
 
 // forwardClientToUpstream forwards data from the client to upstream.
 func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
-	buf := make([]byte, c.config.ReadBufferSize)
+	buf := make([]byte, constants.DefaultBufferSize)
 	const readTimeout = 5 * time.Minute
 
 	for {
