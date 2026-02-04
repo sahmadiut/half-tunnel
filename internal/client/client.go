@@ -59,6 +59,8 @@ type Config struct {
 	DownstreamTLS    *tls.Config
 	ReadBufferSize   int
 	WriteBufferSize  int
+	// Data flow monitoring settings
+	DataFlowMonitor *DataFlowMonitorConfig
 }
 
 // DefaultConfig returns default client configuration.
@@ -78,6 +80,7 @@ func DefaultConfig() *Config {
 		HandshakeTimeout: 10 * time.Second,
 		ReadBufferSize:   constants.DefaultBufferSize,
 		WriteBufferSize:  constants.DefaultBufferSize,
+		DataFlowMonitor:  DefaultDataFlowMonitorConfig(),
 	}
 }
 
@@ -91,12 +94,19 @@ type Client struct {
 	downstream *transport.Connection
 	socks5     *socks5.Server
 
+	// Data flow monitoring
+	dataFlowMonitor *DataFlowMonitor
+
 	// Port forward listeners
 	portForwardListeners []net.Listener
 
 	// Stream management
 	streamConns   map[uint32]*streamConn
 	streamConnsMu sync.RWMutex
+
+	// Log rate limiting for unknown stream warnings
+	unknownStreamLogCount int64
+	unknownStreamLastLog  int64 // Unix timestamp
 
 	// State
 	running          int32
@@ -135,13 +145,19 @@ func New(config *Config, log *logger.Logger) *Client {
 	if config.WriteBufferSize <= 0 {
 		config.WriteBufferSize = constants.DefaultBufferSize
 	}
-
-	return &Client{
-		config:      config,
-		log:         log,
-		streamConns: make(map[uint32]*streamConn),
-		shutdown:    make(chan struct{}),
+	if config.DataFlowMonitor == nil {
+		config.DataFlowMonitor = DefaultDataFlowMonitorConfig()
 	}
+
+	client := &Client{
+		config:          config,
+		log:             log,
+		streamConns:     make(map[uint32]*streamConn),
+		shutdown:        make(chan struct{}),
+		dataFlowMonitor: NewDataFlowMonitor(config.DataFlowMonitor, log.WithStr("component", "dataflow")),
+	}
+
+	return client
 }
 
 // Start starts the client and connects to the server.
@@ -218,6 +234,14 @@ func (c *Client) Start(ctx context.Context) error {
 		}
 	}
 
+	// Start data flow monitor
+	c.dataFlowMonitor.SetStallCallback(c.handleDataFlowStall)
+	c.dataFlowMonitor.Start(ctx)
+	c.log.Info().
+		Dur("check_interval", c.config.DataFlowMonitor.CheckInterval).
+		Dur("stall_threshold", c.config.DataFlowMonitor.StallThreshold).
+		Msg("Data flow monitor started")
+
 	return nil
 }
 
@@ -244,6 +268,11 @@ func (c *Client) cleanup() {
 
 	atomic.StoreInt32(&c.reconnecting, 0)
 	atomic.StoreInt64(&c.lastKeepAliveAck, 0)
+
+	// Stop data flow monitor
+	if c.dataFlowMonitor != nil {
+		c.dataFlowMonitor.Stop()
+	}
 
 	// Close SOCKS5 server
 	if c.socks5 != nil {
@@ -272,6 +301,23 @@ func (c *Client) cleanup() {
 
 	// Close transport connections
 	c.cleanupConnectionsLocked()
+}
+
+// handleDataFlowStall is called when data flow stalls.
+func (c *Client) handleDataFlowStall(action StallAction) {
+	switch action {
+	case StallActionLog:
+		// Already logged by the monitor
+	case StallActionRestart:
+		c.log.Warn().Msg("Triggering reconnection due to stalled data flow")
+		c.triggerReconnect("dataflow-stall")
+	case StallActionShutdown:
+		c.log.Error().Msg("Shutting down due to stalled data flow - service will restart")
+		// Stop the client - systemd will restart the service
+		go func() {
+			_ = c.Stop()
+		}()
+	}
 }
 
 // sendHandshake sends the initial handshake packet to both upstream and downstream.
@@ -319,6 +365,10 @@ func (c *Client) sendPacket(pkt *protocol.Packet) error {
 			c.triggerReconnect("upstream")
 		}
 		return err
+	}
+	// Record data flow for monitoring (only count data packets, not control packets)
+	if pkt.IsData() && len(pkt.Payload) > 0 {
+		c.dataFlowMonitor.RecordSend(int64(len(pkt.Payload)))
 	}
 	return nil
 }
@@ -404,20 +454,45 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 	c.streamConnsMu.RUnlock()
 
 	if !exists {
-		c.log.Debug().
-			Uint32("stream_id", pkt.StreamID).
-			Msg("Received packet for unknown stream")
+		// Rate limit this log message to prevent log spam
+		c.logUnknownStreamRateLimited(pkt.StreamID)
 		return
 	}
 
 	// Write data to the client connection
 	if pkt.IsData() && len(pkt.Payload) > 0 {
+		// Record data flow for monitoring
+		c.dataFlowMonitor.RecordReceive(int64(len(pkt.Payload)))
+
 		if _, err := sc.conn.Write(pkt.Payload); err != nil {
 			c.log.Error().Err(err).
 				Uint32("stream_id", pkt.StreamID).
 				Msg("Error writing to client")
 			c.closeStream(pkt.StreamID)
 		}
+	}
+}
+
+// logUnknownStreamRateLimited logs unknown stream messages with rate limiting.
+// Only logs once per second, with a count of suppressed messages.
+func (c *Client) logUnknownStreamRateLimited(streamID uint32) {
+	count := atomic.AddInt64(&c.unknownStreamLogCount, 1)
+	now := time.Now().Unix()
+	lastLog := atomic.LoadInt64(&c.unknownStreamLastLog)
+
+	// Log at most once per second
+	if now > lastLog && atomic.CompareAndSwapInt64(&c.unknownStreamLastLog, lastLog, now) {
+		if count > 1 {
+			c.log.Debug().
+				Uint32("stream_id", streamID).
+				Int64("suppressed_count", count-1).
+				Msg("Received packets for unknown stream (rate limited)")
+		} else {
+			c.log.Debug().
+				Uint32("stream_id", streamID).
+				Msg("Received packet for unknown stream")
+		}
+		atomic.StoreInt64(&c.unknownStreamLogCount, 0)
 	}
 }
 

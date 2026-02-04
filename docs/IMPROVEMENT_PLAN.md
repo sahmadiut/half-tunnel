@@ -192,12 +192,35 @@ type ConnectionHealth struct {
 func MonitorConnection(conn *Connection, interval time.Duration) <-chan ConnectionHealth
 ```
 
-### 3.4 Graceful Degradation
+### 3.4 Data Flow Health Monitoring ✅ (Implemented)
+The tunnel now monitors actual data transfer, not just connection state:
+
+```go
+// internal/client/dataflow_monitor.go
+type DataFlowMonitor struct {
+    // Tracks bytes sent/received, packets, last activity times
+    // Periodically checks if data is flowing
+    // Takes action when data flow stalls
+}
+
+type DataFlowMonitorConfig struct {
+    CheckInterval  time.Duration  // How often to check (default: 30s)
+    StallThreshold time.Duration  // How long before considering stalled (default: 2m)
+    StallAction    StallAction    // Log, Restart, or Shutdown
+}
+```
+
+**Actions on stall**:
+- `StallActionLog`: Log warning only
+- `StallActionRestart`: Trigger reconnection
+- `StallActionShutdown`: Complete shutdown (for systemd restart)
+
+### 3.5 Graceful Degradation
 - Fall back to single-path mode if one domain is unavailable
 - Queue packets during reconnection (bounded buffer)
 - Notify client of degraded mode
 
-### 3.5 Data Integrity Checks
+### 3.6 Data Integrity Checks
 ```go
 // internal/protocol/packet.go
 func (p *Packet) CalculateChecksum() uint32
@@ -307,6 +330,21 @@ var (
 - Distributed request tracking
 - Real-time dashboard
 
+### 6.5 Multi-Client Support
+The server currently supports multiple clients connecting simultaneously:
+- Each client gets a unique SessionID (UUID)
+- Sessions are stored in a session store with maps
+- Downstream connections are tracked per session in `downstreamConns map[uuid.UUID]*transport.Connection`
+
+**Current Status**: Basic multi-client support is implemented.
+
+**Future Improvements**:
+- Session limits (max concurrent clients)
+- Per-client bandwidth limits
+- Client authentication and authorization
+- Client management API (list, kick, stats per client)
+- Session persistence across server restarts
+
 ---
 
 ## Implementation Priority
@@ -330,6 +368,8 @@ var (
 4. ✅ Create this improvement plan document
 5. ✅ Fix port forward defaults: `listen_host` now defaults to `0.0.0.0`, `remote_host` now defaults to `127.0.0.1`
 6. ✅ Add port range support (e.g., "1000-1200" to forward all ports in range)
+7. ✅ Add data flow health monitor (monitors actual data transfer, not just connection state)
+8. ✅ Fix log spam: Rate-limit "Received packet for unknown stream" debug messages
 
 ---
 
