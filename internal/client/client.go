@@ -75,26 +75,6 @@ type Config struct {
 	TCPNoDelay bool
 	// Data flow monitoring settings
 	DataFlowMonitor *DataFlowMonitorConfig
-	// Chisel transport configuration
-	ChiselConfig *ChiselClientConfig
-}
-
-// ChiselClientConfig holds Chisel transport configuration for client.
-type ChiselClientConfig struct {
-	// Enabled controls whether Chisel transport is used for data transfer
-	Enabled bool
-	// ServerURL is the URL for the Chisel server
-	ServerURL string
-	// Fingerprint is the expected server fingerprint
-	Fingerprint string
-	// PortStart is the starting port for local tunnels
-	PortStart int
-	// PortEnd is the ending port for local tunnels
-	PortEnd int
-	// KeepAlive interval for connections
-	KeepAlive time.Duration
-	// TLSCert is the path to CA certificate for server verification
-	TLSCert string
 }
 
 // DefaultConfig returns default client configuration.
@@ -129,9 +109,6 @@ type Client struct {
 	upstream   *transport.Connection
 	downstream *transport.Connection
 	socks5     *socks5.Server
-
-	// Chisel transport for data transfer
-	chiselTransport *transport.ChiselClientTransport
 
 	// Data flow monitoring
 	dataFlowMonitor *DataFlowMonitor
@@ -208,27 +185,6 @@ func New(config *Config, log *logger.Logger) *Client {
 		dataFlowMonitor: NewDataFlowMonitor(config.DataFlowMonitor, log.WithStr("component", "dataflow")),
 	}
 
-	// Initialize Chisel transport if enabled
-	if config.ChiselConfig != nil && config.ChiselConfig.Enabled {
-		chiselConfig := &transport.ChiselConfig{
-			Enabled:     true,
-			ServerURL:   config.ChiselConfig.ServerURL,
-			Port:        config.ChiselConfig.PortStart,
-			Fingerprint: config.ChiselConfig.Fingerprint,
-			KeepAlive:   config.ChiselConfig.KeepAlive,
-			TLSCert:     config.ChiselConfig.TLSCert,
-		}
-		chiselTransport, err := transport.NewChiselClientTransport(chiselConfig, log)
-		if err != nil {
-			log.Error().Err(err).Msg("Failed to create Chisel transport, falling back to WebSocket")
-		} else {
-			client.chiselTransport = chiselTransport
-			log.Info().
-				Str("server_url", config.ChiselConfig.ServerURL).
-				Msg("Chisel transport enabled for data transfer")
-		}
-	}
-
 	return client
 }
 
@@ -241,16 +197,6 @@ func (c *Client) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	c.ctx = ctx
 	c.cancel = cancel
-
-	// Start Chisel transport if enabled
-	if c.chiselTransport != nil {
-		if err := c.chiselTransport.Start(ctx); err != nil {
-			c.log.Error().Err(err).Msg("Failed to start Chisel transport")
-			// Continue without Chisel - will use WebSocket only
-		} else {
-			c.log.Info().Msg("Chisel transport started")
-		}
-	}
 
 	// Create a new session
 	c.session = session.New()
@@ -392,13 +338,6 @@ func (c *Client) cleanup() {
 	atomic.StoreInt32(&c.reconnecting, 0)
 	atomic.StoreInt64(&c.lastKeepAliveAck, 0)
 	atomic.StoreInt32(&c.servicesRunning, 0)
-
-	// Stop Chisel transport
-	if c.chiselTransport != nil {
-		if err := c.chiselTransport.Stop(); err != nil {
-			c.log.Debug().Err(err).Msg("Error stopping Chisel transport")
-		}
-	}
 
 	// Stop data flow monitor
 	if c.dataFlowMonitor != nil {
