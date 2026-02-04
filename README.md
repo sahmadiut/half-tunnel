@@ -84,6 +84,22 @@ curl --socks5 127.0.0.1:1080 https://example.com
 proxychains4 curl https://example.com
 ```
 
+### Service Management
+
+You can manage Half-Tunnel as a systemd service using the built-in service manager:
+
+```bash
+# Install systemd service
+sudo half-tunnel service install --type server      # For server
+sudo half-tunnel service install --type client      # For client
+
+# Service commands
+sudo half-tunnel service start --type <client|server>
+sudo half-tunnel service stop --type <client|server>
+sudo half-tunnel service status --type <client|server>
+sudo half-tunnel service logs --type <client|server>
+```
+
 ## Configuration
 
 Configuration can be provided via:
