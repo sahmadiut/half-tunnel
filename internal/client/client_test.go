@@ -166,6 +166,9 @@ func TestServicesNotStartedWhenNotConnected(t *testing.T) {
 	config := DefaultConfig()
 	config.SOCKS5Enabled = true
 	config.SOCKS5Addr = "127.0.0.1:0" // Use port 0 to avoid conflicts
+	config.PortForwards = []PortForward{
+		{Name: "test", ListenHost: "127.0.0.1", ListenPort: 0, RemoteHost: "127.0.0.1", RemotePort: 80},
+	}
 	config.PingInterval = 0
 	config.ReconnectEnabled = true
 	config.DialTimeout = time.Millisecond
@@ -185,6 +188,18 @@ func TestServicesNotStartedWhenNotConnected(t *testing.T) {
 		_ = client.Stop()
 		dialTransport = originalDial
 		t.Error("SOCKS5 server should not be started when tunnel is not connected")
+		return
+	}
+
+	// Port forward listeners should also NOT be running
+	client.mu.RLock()
+	pfListeners := len(client.portForwardListeners)
+	client.mu.RUnlock()
+	if pfListeners > 0 {
+		cancel()
+		_ = client.Stop()
+		dialTransport = originalDial
+		t.Error("Port forward listeners should not be started when tunnel is not connected")
 		return
 	}
 

@@ -1,4 +1,5 @@
-// Package health provides health check endpoints for the Half-Tunnel system.
+// Package health provides health check functionality for the Half-Tunnel system.
+// This file contains connection health monitoring utilities.
 package health
 
 import (

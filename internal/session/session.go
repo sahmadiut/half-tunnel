@@ -49,13 +49,15 @@ type Stream struct {
 
 // StreamState holds the state of a stream for persistence and resumption.
 // This is used for stream recovery after reconnection.
+// Note: Checksum is not automatically populated by GetStreamState() - it should be
+// calculated at the packet level using Packet.CalculateChecksum() when needed.
 type StreamState struct {
 	ID           uint32
 	State        State
 	BytesSent    int64
 	BytesRecv    int64
 	LastActivity time.Time
-	Checksum     uint32 // For data integrity verification
+	Checksum     uint32 // For data integrity verification (calculated by caller)
 }
 
 // NewStream creates a new stream with the given ID.
