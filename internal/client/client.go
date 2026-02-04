@@ -467,9 +467,6 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 
 	// Handle FIN packets
 	if pkt.IsFin() {
-		c.log.Debug().
-			Uint32("stream_id", pkt.StreamID).
-			Msg("Stream closing")
 		c.closeStream(pkt.StreamID)
 		return
 	}

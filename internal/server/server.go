@@ -482,10 +482,6 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 
 	// Handle handshake for new streams (contains destination info)
 	if pkt.IsHandshake() && pkt.IsData() && len(pkt.Payload) > 0 {
-		s.log.Debug().
-			Str("session_id", pkt.SessionID.String()).
-			Uint32("stream_id", pkt.StreamID).
-			Msg("Stream opening")
 		destHost, destPort, err := parseConnectPayload(pkt.Payload)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Error parsing connect payload")
@@ -537,10 +533,6 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 
 	// Handle FIN packets
 	if pkt.IsFin() {
-		s.log.Debug().
-			Str("session_id", pkt.SessionID.String()).
-			Uint32("stream_id", pkt.StreamID).
-			Msg("Stream closing")
 		s.closeNatEntry(pkt.SessionID, pkt.StreamID)
 		return
 	}
