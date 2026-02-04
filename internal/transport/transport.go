@@ -25,7 +25,9 @@ var (
 )
 
 // WriteQueueSize is the default size of the async write queue.
-const WriteQueueSize = 10000
+// Reduced from 10,000 to 256 to prevent memory pressure under high load.
+// 256 is sufficient for buffering 2-3 seconds of traffic while avoiding GB-scale memory leaks.
+const WriteQueueSize = 256
 
 // Config holds transport configuration.
 type Config struct {
@@ -71,7 +73,7 @@ type Connection struct {
 	closed     bool
 	closedCh   chan struct{}
 	writeQueue chan []byte    // Async write queue for high-throughput scenarios
-	writeWg    sync.WaitGroup // Wait group for write goroutine
+	writeWg    sync.WaitGroup // Wait group for write goroutine and keep-alive goroutine
 }
 
 // createDialer creates a net.Dialer configured based on Config settings.
@@ -176,14 +178,33 @@ func Dial(ctx context.Context, config *Config) (*Connection, error) {
 		writeQueue: make(chan []byte, WriteQueueSize),
 	}
 
+	// Set up pong handler for keep-alive mechanism
+	if config.PingInterval > 0 && config.PongTimeout > 0 {
+		conn.SetPongHandler(func(appData string) error {
+			// Reset the read deadline on receiving pong
+			if config.ReadTimeout > 0 {
+				return conn.SetReadDeadline(time.Now().Add(config.ReadTimeout))
+			}
+			return nil
+		})
+	}
+
 	// Start async write goroutine
 	c.writeWg.Add(1)
 	go c.writeLoop()
+
+	// Start keep-alive goroutine if PingInterval is configured
+	if config.PingInterval > 0 {
+		c.writeWg.Add(1)
+		go c.pingLoop()
+	}
 
 	return c, nil
 }
 
 // writeLoop processes the async write queue.
+// If a write error occurs, it closes the connection to prevent zombie loops
+// where the write loop spins indefinitely while the connection is broken.
 func (c *Connection) writeLoop() {
 	defer c.writeWg.Done()
 
@@ -203,9 +224,55 @@ func (c *Connection) writeLoop() {
 			if !ok {
 				return
 			}
-			// Write errors are handled by returning - connection is broken
-			// Caller will detect via subsequent read/write failures
-			_ = c.writeSync(data)
+			// If writeSync fails, close the connection to prevent zombie write loops.
+			// This triggers closedCh, which stops the loop and signals listeners.
+			if err := c.writeSync(data); err != nil {
+				// Close connection on write error to prevent spinning
+				go c.Close()
+				return
+			}
+		}
+	}
+}
+
+// pingLoop sends periodic WebSocket ping frames to keep the connection alive.
+// This is an application-level keep-alive that supplements TCP keep-alive,
+// which is insufficient in high packet loss scenarios where intermediate
+// network state matters.
+func (c *Connection) pingLoop() {
+	defer c.writeWg.Done()
+
+	ticker := time.NewTicker(c.config.PingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.closedCh:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			if c.closed {
+				c.mu.Unlock()
+				return
+			}
+
+			// Set write deadline for ping
+			if c.config.WriteTimeout > 0 {
+				if err := c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout)); err != nil {
+					c.mu.Unlock()
+					go c.Close()
+					return
+				}
+			}
+
+			// Send WebSocket ping frame
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				c.mu.Unlock()
+				// Ping failed, close the connection
+				go c.Close()
+				return
+			}
+			c.mu.Unlock()
 		}
 	}
 }
