@@ -1,4 +1,9 @@
 // Package client provides the Half-Tunnel entry client implementation.
+//
+// Logging Performance Note:
+// Per-packet DEBUG logging is intentionally verbose for troubleshooting.
+// In production, use INFO or higher log levels to avoid performance impact.
+// Periodic metrics (logged every 30s at INFO level) provide aggregate monitoring.
 package client
 
 import (
@@ -104,6 +109,10 @@ type Client struct {
 	streamConns   map[uint32]*streamConn
 	streamConnsMu sync.RWMutex
 
+	// Connection metrics
+	metrics   ConnectionMetrics
+	metricsMu sync.RWMutex
+
 	// Log rate limiting for unknown stream warnings
 	unknownStreamLogCount int64
 	unknownStreamLastLog  int64 // Unix timestamp
@@ -126,6 +135,14 @@ type streamConn struct {
 	conn     net.Conn
 	streamID uint32
 	done     chan struct{}
+}
+
+// ConnectionMetrics holds metrics for monitoring data transfer.
+type ConnectionMetrics struct {
+	BytesSent       int64
+	BytesReceived   int64
+	PacketsSent     int64
+	PacketsReceived int64
 }
 
 // New creates a new Half-Tunnel client.
@@ -241,6 +258,10 @@ func (c *Client) Start(ctx context.Context) error {
 		Dur("check_interval", c.config.DataFlowMonitor.CheckInterval).
 		Dur("stall_threshold", c.config.DataFlowMonitor.StallThreshold).
 		Msg("Data flow monitor started")
+
+	// Start periodic metrics logging
+	c.wg.Add(1)
+	go c.logMetricsPeriodically(ctx)
 
 	return nil
 }
@@ -360,6 +381,10 @@ func (c *Client) sendPacket(pkt *protocol.Packet) error {
 	if err != nil {
 		return err
 	}
+
+	// Record sent packet metrics
+	c.recordPacketSent(int64(len(data)))
+
 	if err := upstream.Write(data); err != nil {
 		if c.shouldReconnect() {
 			c.triggerReconnect("upstream")
@@ -407,6 +432,9 @@ func (c *Client) readDownstream(ctx context.Context) {
 			}
 			return
 		}
+
+		// Record received packet metrics
+		c.recordPacketReceived(int64(len(data)))
 
 		pkt, err := protocol.Unmarshal(data)
 		if err != nil {
@@ -461,6 +489,13 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 
 	// Write data to the client connection
 	if pkt.IsData() && len(pkt.Payload) > 0 {
+		// Per-packet DEBUG logging (see package doc for performance notes)
+		c.log.Debug().
+			Uint32("stream_id", pkt.StreamID).
+			Int("bytes", len(pkt.Payload)).
+			Str("direction", "from_server").
+			Msg("Data transfer")
+
 		// Record data flow for monitoring
 		c.dataFlowMonitor.RecordReceive(int64(len(pkt.Payload)))
 
@@ -523,6 +558,11 @@ func (c *Client) handleConnect(ctx context.Context, req *socks5.ConnectRequest) 
 		return err
 	}
 
+	c.log.Debug().
+		Uint32("stream_id", streamID).
+		Str("dest_addr", socks5.FormatDestination(req.DestHost, req.DestPort)).
+		Msg("Stream opened")
+
 	// Register the stream connection
 	sc := &streamConn{
 		conn:     req.ClientConn,
@@ -580,6 +620,13 @@ func (c *Client) forwardClientToUpstream(ctx context.Context, sc *streamConn) {
 		}
 
 		if n > 0 {
+			// Per-packet DEBUG logging (see package doc for performance notes)
+			c.log.Debug().
+				Uint32("stream_id", sc.streamID).
+				Int("bytes", n).
+				Str("direction", "to_server").
+				Msg("Data transfer")
+
 			if err := c.mux.SendPacket(sc.streamID, protocol.FlagData, buf[:n]); err != nil {
 				c.log.Error().Err(err).
 					Uint32("stream_id", sc.streamID).
@@ -601,6 +648,9 @@ func (c *Client) closeStream(streamID uint32) {
 	c.streamConnsMu.Unlock()
 
 	if exists {
+		c.log.Debug().
+			Uint32("stream_id", streamID).
+			Msg("Stream closed")
 		select {
 		case <-sc.done:
 			// Already closed
@@ -1020,4 +1070,61 @@ func (c *Client) IsConnected() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.upstream != nil && c.downstream != nil
+}
+
+// logMetricsPeriodically logs connection metrics every 30 seconds.
+func (c *Client) logMetricsPeriodically(ctx context.Context) {
+	defer c.wg.Done()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.shutdown:
+			return
+		case <-ticker.C:
+			c.logMetrics()
+		}
+	}
+}
+
+// logMetrics logs current connection metrics.
+func (c *Client) logMetrics() {
+	c.metricsMu.RLock()
+	bytesSent := c.metrics.BytesSent
+	bytesReceived := c.metrics.BytesReceived
+	packetsSent := c.metrics.PacketsSent
+	packetsReceived := c.metrics.PacketsReceived
+	c.metricsMu.RUnlock()
+
+	c.streamConnsMu.RLock()
+	activeStreams := len(c.streamConns)
+	c.streamConnsMu.RUnlock()
+
+	c.log.Info().
+		Int64("bytes_sent", bytesSent).
+		Int64("bytes_received", bytesReceived).
+		Int64("packets_sent", packetsSent).
+		Int64("packets_received", packetsReceived).
+		Int("active_streams", activeStreams).
+		Msg("Connection metrics")
+}
+
+// recordPacketReceived increments the packets received counter.
+func (c *Client) recordPacketReceived(bytes int64) {
+	c.metricsMu.Lock()
+	c.metrics.PacketsReceived++
+	c.metrics.BytesReceived += bytes
+	c.metricsMu.Unlock()
+}
+
+// recordPacketSent increments the packets sent counter.
+func (c *Client) recordPacketSent(bytes int64) {
+	c.metricsMu.Lock()
+	c.metrics.PacketsSent++
+	c.metrics.BytesSent += bytes
+	c.metricsMu.Unlock()
 }

@@ -1,4 +1,9 @@
 // Package server provides the Half-Tunnel exit server implementation.
+//
+// Logging Performance Note:
+// Per-packet DEBUG logging is intentionally verbose for troubleshooting.
+// In production, use INFO or higher log levels to avoid performance impact.
+// Periodic metrics (logged every 30s at INFO level) provide aggregate monitoring.
 package server
 
 import (
@@ -92,6 +97,10 @@ type Server struct {
 	natTable   map[natKey]*natEntry
 	natTableMu sync.RWMutex
 
+	// Connection metrics
+	metrics   ConnectionMetrics
+	metricsMu sync.RWMutex
+
 	// State
 	running  int32
 	shutdown chan struct{}
@@ -109,6 +118,14 @@ type natEntry struct {
 	conn     net.Conn
 	destAddr string
 	created  time.Time
+}
+
+// ConnectionMetrics holds metrics for monitoring data transfer.
+type ConnectionMetrics struct {
+	BytesSent       int64
+	BytesReceived   int64
+	PacketsSent     int64
+	PacketsReceived int64
 }
 
 // New creates a new Half-Tunnel server.
@@ -213,6 +230,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.wg.Add(1)
 	go s.handleDownstreamConnections(ctx)
+
+	// Start periodic metrics logging
+	s.wg.Add(1)
+	go s.logMetricsPeriodically(ctx)
 
 	return nil
 }
@@ -342,6 +363,9 @@ func (s *Server) handleUpstreamConnection(ctx context.Context, conn *transport.C
 			return
 		}
 
+		// Record received packet metrics
+		s.recordPacketReceived(int64(len(data)))
+
 		pkt, err := protocol.Unmarshal(data)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Error unmarshaling packet")
@@ -463,10 +487,6 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 
 	// Handle handshake for new streams (contains destination info)
 	if pkt.IsHandshake() && pkt.IsData() && len(pkt.Payload) > 0 {
-		s.log.Info().
-			Str("session_id", pkt.SessionID.String()).
-			Uint32("stream_id", pkt.StreamID).
-			Msg("Received upstream handshake")
 		destHost, destPort, err := parseConnectPayload(pkt.Payload)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Error parsing connect payload")
@@ -476,17 +496,23 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 		// Connect to destination
 		destAddr := fmt.Sprintf("%s:%d", destHost, destPort)
 		s.log.Debug().
-			Str("dest", destAddr).
+			Str("dest_addr", destAddr).
 			Uint32("stream_id", pkt.StreamID).
 			Msg("Connecting to destination")
 
 		conn, err := net.DialTimeout("tcp", destAddr, s.config.DialTimeout)
 		if err != nil {
-			s.log.Error().Err(err).Str("dest", destAddr).Msg("Failed to connect to destination")
+			s.log.Error().Err(err).Str("dest_addr", destAddr).Msg("Failed to connect to destination")
 			// Send FIN packet back
 			_ = s.sendDownstreamPacket(pkt.SessionID, pkt.StreamID, protocol.FlagFin, nil)
 			return
 		}
+
+		s.log.Debug().
+			Str("session_id", pkt.SessionID.String()).
+			Uint32("stream_id", pkt.StreamID).
+			Str("dest_addr", destAddr).
+			Msg("Stream opened")
 
 		// Register in NAT table
 		key := natKey{SessionID: pkt.SessionID, StreamID: pkt.StreamID}
@@ -518,6 +544,13 @@ func (s *Server) handleUpstreamPacket(ctx context.Context, pkt *protocol.Packet)
 
 	// Handle data packets - forward to destination
 	if pkt.IsData() && len(pkt.Payload) > 0 {
+		// Per-packet DEBUG logging (see package doc for performance notes)
+		s.log.Debug().
+			Uint32("stream_id", pkt.StreamID).
+			Int("bytes", len(pkt.Payload)).
+			Str("direction", "to_dest").
+			Msg("Data transfer")
+
 		key := natKey{SessionID: pkt.SessionID, StreamID: pkt.StreamID}
 		s.natTableMu.RLock()
 		entry, exists := s.natTable[key]
@@ -567,6 +600,13 @@ func (s *Server) forwardDestToDownstream(ctx context.Context, sessionID uuid.UUI
 		}
 
 		if n > 0 {
+			// Per-packet DEBUG logging (see package doc for performance notes)
+			s.log.Debug().
+				Uint32("stream_id", streamID).
+				Int("bytes", n).
+				Str("direction", "from_dest").
+				Msg("Data transfer")
+
 			if err := s.sendDownstreamPacket(sessionID, streamID, protocol.FlagData, buf[:n]); err != nil {
 				s.log.Error().Err(err).
 					Uint32("stream_id", streamID).
@@ -597,6 +637,9 @@ func (s *Server) sendDownstreamPacket(sessionID uuid.UUID, streamID uint32, flag
 		return err
 	}
 
+	// Record sent packet metrics
+	s.recordPacketSent(int64(len(data)))
+
 	return conn.Write(data)
 }
 
@@ -612,6 +655,10 @@ func (s *Server) closeNatEntry(sessionID uuid.UUID, streamID uint32) {
 	s.natTableMu.Unlock()
 
 	if exists && entry.conn != nil {
+		s.log.Debug().
+			Str("session_id", sessionID.String()).
+			Uint32("stream_id", streamID).
+			Msg("Stream closed")
 		entry.conn.Close()
 	}
 }
@@ -668,4 +715,61 @@ func (s *Server) GetNatEntryCount() int {
 	s.natTableMu.RLock()
 	defer s.natTableMu.RUnlock()
 	return len(s.natTable)
+}
+
+// logMetricsPeriodically logs connection metrics every 30 seconds.
+func (s *Server) logMetricsPeriodically(ctx context.Context) {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.shutdown:
+			return
+		case <-ticker.C:
+			s.logMetrics()
+		}
+	}
+}
+
+// logMetrics logs current connection metrics.
+func (s *Server) logMetrics() {
+	s.metricsMu.RLock()
+	bytesSent := s.metrics.BytesSent
+	bytesReceived := s.metrics.BytesReceived
+	packetsSent := s.metrics.PacketsSent
+	packetsReceived := s.metrics.PacketsReceived
+	s.metricsMu.RUnlock()
+
+	activeStreams := s.GetNatEntryCount()
+	activeSessions := s.GetSessionCount()
+
+	s.log.Info().
+		Int64("bytes_sent", bytesSent).
+		Int64("bytes_received", bytesReceived).
+		Int64("packets_sent", packetsSent).
+		Int64("packets_received", packetsReceived).
+		Int("active_streams", activeStreams).
+		Int("active_sessions", activeSessions).
+		Msg("Connection metrics")
+}
+
+// recordPacketReceived increments the packets received counter.
+func (s *Server) recordPacketReceived(bytes int64) {
+	s.metricsMu.Lock()
+	s.metrics.PacketsReceived++
+	s.metrics.BytesReceived += bytes
+	s.metricsMu.Unlock()
+}
+
+// recordPacketSent increments the packets sent counter.
+func (s *Server) recordPacketSent(bytes int64) {
+	s.metricsMu.Lock()
+	s.metrics.PacketsSent++
+	s.metrics.BytesSent += bytes
+	s.metricsMu.Unlock()
 }
