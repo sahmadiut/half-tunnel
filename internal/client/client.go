@@ -138,8 +138,6 @@ type ConnectionMetrics struct {
 	BytesReceived   int64
 	PacketsSent     int64
 	PacketsReceived int64
-	ActiveStreams   int
-	Latency         time.Duration
 }
 
 // New creates a new Half-Tunnel client.
