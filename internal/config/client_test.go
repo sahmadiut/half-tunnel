@@ -100,7 +100,7 @@ func TestParsePortForwardString(t *testing.T) {
 			input:      "2083",
 			wantListen: 2083,
 			wantRemote: 2083,
-			wantHost:   "",
+			wantHost:   "127.0.0.1",
 			wantErr:    false,
 		},
 		{
@@ -108,7 +108,7 @@ func TestParsePortForwardString(t *testing.T) {
 			input:      "8080:80",
 			wantListen: 8080,
 			wantRemote: 80,
-			wantHost:   "",
+			wantHost:   "127.0.0.1",
 			wantErr:    false,
 		},
 		{
@@ -128,6 +128,14 @@ func TestParsePortForwardString(t *testing.T) {
 			name:    "too many parts",
 			input:   "8080:host:80:extra",
 			wantErr: true,
+		},
+		{
+			name:       "port range first port",
+			input:      "1000-1005",
+			wantListen: 1000,
+			wantRemote: 1000,
+			wantHost:   "127.0.0.1",
+			wantErr:    false,
 		},
 	}
 
@@ -224,6 +232,12 @@ func TestParsePortForwards(t *testing.T) {
 				map[string]interface{}{"name": "test"},
 			},
 			wantErr: true,
+		},
+		{
+			name:    "port range",
+			input:   []interface{}{"1000-1005"},
+			want:    6, // 6 ports: 1000, 1001, 1002, 1003, 1004, 1005
+			wantErr: false,
 		},
 	}
 

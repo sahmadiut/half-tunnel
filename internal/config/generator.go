@@ -174,19 +174,24 @@ func (g *ConfigGenerator) generateClientConfigFromOptions(cfg *ClientConfig, opt
 	// Parse port forwards
 	var portForwards []interface{}
 	for _, pf := range opts.PortForwards {
+		// Check if it's a port range
+		if isPortRange(pf) {
+			portForwards = append(portForwards, pf)
+			continue
+		}
 		parsed, err := ParsePortForwardString(pf)
 		if err != nil {
 			return nil, fmt.Errorf("invalid port forward %q: %w", pf, err)
 		}
-		// Convert to simple format if possible
-		if parsed.RemoteHost == "" && parsed.ListenPort == parsed.RemotePort {
+		// Convert to simple format if possible (remote_host is default 127.0.0.1)
+		if parsed.RemoteHost == "127.0.0.1" && parsed.ListenPort == parsed.RemotePort {
 			portForwards = append(portForwards, parsed.ListenPort)
 		} else {
 			pfMap := map[string]interface{}{
 				"listen_port": parsed.ListenPort,
 				"remote_port": parsed.RemotePort,
 			}
-			if parsed.RemoteHost != "" {
+			if parsed.RemoteHost != "" && parsed.RemoteHost != "127.0.0.1" {
 				pfMap["remote_host"] = parsed.RemoteHost
 			}
 			portForwards = append(portForwards, pfMap)
@@ -424,18 +429,18 @@ observability:
 	}
 	
 	for _, pf := range portForwards {
-		if pf.RemoteHost == "" && pf.ListenPort == pf.RemotePort {
+		if pf.RemoteHost == "127.0.0.1" && pf.ListenPort == pf.RemotePort && pf.ListenHost == "0.0.0.0" {
 			data.PortForwardsRendered = append(data.PortForwardsRendered, strconv.Itoa(pf.ListenPort))
 		} else {
 			var parts []string
 			if pf.Name != "" {
 				parts = append(parts, fmt.Sprintf("name: %q", pf.Name))
 			}
-			if pf.ListenHost != "127.0.0.1" {
+			if pf.ListenHost != "0.0.0.0" {
 				parts = append(parts, fmt.Sprintf("listen_host: %q", pf.ListenHost))
 			}
 			parts = append(parts, fmt.Sprintf("listen_port: %d", pf.ListenPort))
-			if pf.RemoteHost != "" {
+			if pf.RemoteHost != "" && pf.RemoteHost != "127.0.0.1" {
 				parts = append(parts, fmt.Sprintf("remote_host: %q", pf.RemoteHost))
 			}
 			if pf.RemotePort != pf.ListenPort {

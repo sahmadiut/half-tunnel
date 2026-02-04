@@ -328,6 +328,8 @@ var (
 2. ✅ Add TLS logging when server starts with TLS enabled
 3. ✅ Improve install script with service installation flag
 4. ✅ Create this improvement plan document
+5. ✅ Fix port forward defaults: `listen_host` now defaults to `0.0.0.0`, `remote_host` now defaults to `127.0.0.1`
+6. ✅ Add port range support (e.g., "1000-1200" to forward all ports in range)
 
 ---
 
@@ -344,7 +346,7 @@ var (
 ## Metrics for Success
 
 - **Logging**: All TLS/connection events logged with proper context
-- **Speed**: 20%+ improvement in data transfer throughput
+- **Speed**: Measurable improvement in data transfer throughput based on benchmark results
 - **Reliability**: 99.9%+ uptime with automatic recovery
 - **Installation**: Single command deployment with service auto-start
 - **Quality**: 80%+ test coverage, zero critical bugs
