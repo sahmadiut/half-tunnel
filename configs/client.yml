@@ -73,8 +73,8 @@ tunnel:
     
   # Connection settings
   connection:
-    read_buffer_size: 32768
-    write_buffer_size: 32768
+    read_buffer_size: 65536
+    write_buffer_size: 65536
     keepalive_interval: "30s"
     # Timeout for keepalive ack responses before triggering reconnection.
     # Set higher for high-load scenarios to avoid false disconnects.
@@ -82,7 +82,7 @@ tunnel:
     keepalive_timeout: "90s"
     dial_timeout: "10s"
     # Buffer mode: small (16KB), default (32KB), large (64KB), max (128KB)
-    buffer_mode: "default"
+    buffer_mode: "large"
     # TCP_NODELAY: disable Nagle's algorithm for lower latency
     tcp_nodelay: true
     # IP version: "4" for IPv4 only, "6" for IPv6 only, "" for auto

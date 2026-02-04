@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -23,6 +25,12 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if config.HandshakeTimeout != 10*time.Second {
 		t.Errorf("HandshakeTimeout = %v, want 10s", config.HandshakeTimeout)
+	}
+	if config.ReadBufferSize != constants.DefaultBufferSize {
+		t.Errorf("ReadBufferSize = %d, want %d", config.ReadBufferSize, constants.DefaultBufferSize)
+	}
+	if config.WriteBufferSize != constants.DefaultBufferSize {
+		t.Errorf("WriteBufferSize = %d, want %d", config.WriteBufferSize, constants.DefaultBufferSize)
 	}
 }
 

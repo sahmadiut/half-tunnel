@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/spf13/viper"
 )
 
@@ -141,11 +142,11 @@ func DefaultServerConfig() *ServerConfig {
 				MaxSessions: 1000,
 			},
 			Connection: ServerConnectionConfig{
-				ReadBufferSize:    32768,
-				WriteBufferSize:   32768,
+				ReadBufferSize:    constants.LargeBufferSize,
+				WriteBufferSize:   constants.LargeBufferSize,
 				KeepaliveInterval: 30 * time.Second,
 				MaxMessageSize:    65536,
-				BufferMode:        "default",
+				BufferMode:        "large",
 				TCPNoDelay:        true,
 			},
 			Encryption: EncryptionConfig{

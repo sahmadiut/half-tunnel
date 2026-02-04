@@ -2,7 +2,8 @@ package server
 
 import (
 	"testing"
-	
+
+	"github.com/sahmadiut/half-tunnel/internal/constants"
 	"github.com/sahmadiut/half-tunnel/internal/socks5"
 )
 
@@ -20,6 +21,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if config.DownstreamPath != "/downstream" {
 		t.Errorf("Expected DownstreamPath /downstream, got %s", config.DownstreamPath)
+	}
+	if config.BufferMode != constants.BufferModeLarge {
+		t.Errorf("Expected BufferMode large, got %s", config.BufferMode)
 	}
 }
 
@@ -111,12 +115,12 @@ func TestNewServer(t *testing.T) {
 
 func TestServerGetters(t *testing.T) {
 	server := New(nil, nil)
-	
+
 	// Test session count
 	if count := server.GetSessionCount(); count != 0 {
 		t.Errorf("Expected 0 sessions, got %d", count)
 	}
-	
+
 	// Test NAT entry count
 	if count := server.GetNatEntryCount(); count != 0 {
 		t.Errorf("Expected 0 NAT entries, got %d", count)

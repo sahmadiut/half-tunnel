@@ -134,6 +134,8 @@ func main() {
 		HandshakeTimeout: cfg.Tunnel.Connection.DialTimeout,
 		ReadBufferSize:   cfg.Tunnel.Connection.ReadBufferSize,
 		WriteBufferSize:  cfg.Tunnel.Connection.WriteBufferSize,
+		IPVersion:        cfg.Tunnel.Connection.IPVersion,
+		TCPNoDelay:       cfg.Tunnel.Connection.TCPNoDelay,
 	}
 
 	// Set SOCKS5 authentication if enabled
