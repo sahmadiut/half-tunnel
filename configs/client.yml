@@ -93,6 +93,22 @@ tunnel:
     enabled: true
     algorithm: "aes-256-gcm"
 
+  # Chisel transport for improved data transfer
+  # Uses jpillora/chisel for TCP tunneling over HTTP/HTTPS
+  chisel:
+    enabled: false
+    # Chisel server URL (e.g., "https://server:2087")
+    server_url: "https://example.com:2087"
+    # Expected server fingerprint for verification (optional)
+    fingerprint: ""
+    # Port range for local chisel tunnels
+    port_start: 9000
+    port_end: 9999
+    # Keepalive interval for chisel connections
+    keepalive: "25s"
+    # Path to CA certificate for server verification (optional)
+    tls_cert: ""
+
 # DNS settings (for full VPN mode)
 dns:
   enabled: false

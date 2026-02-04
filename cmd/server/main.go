@@ -99,6 +99,20 @@ func main() {
 		DialTimeout:     cfg.Tunnel.Connection.KeepaliveInterval,
 	}
 
+	// Set Chisel configuration if enabled
+	if cfg.Tunnel.Chisel.Enabled {
+		serverConfig.ChiselConfig = &server.ChiselServerConfig{
+			Enabled:   true,
+			Host:      cfg.Tunnel.Chisel.Host,
+			Port:      cfg.Tunnel.Chisel.Port,
+			PortStart: cfg.Tunnel.Chisel.PortStart,
+			PortEnd:   cfg.Tunnel.Chisel.PortEnd,
+			TLSCert:   cfg.Tunnel.Chisel.TLSCert,
+			TLSKey:    cfg.Tunnel.Chisel.TLSKey,
+			KeepAlive: cfg.Tunnel.Chisel.KeepAlive,
+		}
+	}
+
 	// Create and start the server
 	s := server.New(serverConfig, log)
 	if err := s.Start(ctx); err != nil {

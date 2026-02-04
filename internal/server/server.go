@@ -48,6 +48,28 @@ type Config struct {
 	WriteBufferSize int
 	MaxMessageSize  int
 	DialTimeout     time.Duration
+	// Chisel transport configuration
+	ChiselConfig *ChiselServerConfig
+}
+
+// ChiselServerConfig holds Chisel transport configuration for server.
+type ChiselServerConfig struct {
+	// Enabled controls whether Chisel transport is used for data transfer
+	Enabled bool
+	// Host is the listening host for Chisel server
+	Host string
+	// Port is the listening port for Chisel server
+	Port int
+	// PortStart is the starting port for remote tunnels
+	PortStart int
+	// PortEnd is the ending port for remote tunnels
+	PortEnd int
+	// TLSCert is the path to TLS certificate file
+	TLSCert string
+	// TLSKey is the path to TLS key file
+	TLSKey string
+	// KeepAlive interval for connections
+	KeepAlive time.Duration
 }
 
 // TLSConfig holds TLS certificate settings.
@@ -88,6 +110,9 @@ type Server struct {
 	// HTTP servers
 	upstreamServer   *http.Server
 	downstreamServer *http.Server
+
+	// Chisel transport for data transfer
+	chiselTransport *transport.ChiselServerTransport
 
 	// Session to downstream connection mapping
 	downstreamConns   map[uuid.UUID]*transport.Connection
@@ -137,7 +162,7 @@ func New(config *Config, log *logger.Logger) *Server {
 		log = logger.NewDefault()
 	}
 
-	return &Server{
+	server := &Server{
 		config:          config,
 		log:             log,
 		sessionStore:    session.NewStore(config.SessionTimeout),
@@ -145,12 +170,48 @@ func New(config *Config, log *logger.Logger) *Server {
 		natTable:        make(map[natKey]*natEntry),
 		shutdown:        make(chan struct{}),
 	}
+
+	// Initialize Chisel transport if enabled
+	if config.ChiselConfig != nil && config.ChiselConfig.Enabled {
+		chiselConfig := &transport.ChiselConfig{
+			Enabled:   true,
+			Host:      config.ChiselConfig.Host,
+			Port:      config.ChiselConfig.Port,
+			TLSCert:   config.ChiselConfig.TLSCert,
+			TLSKey:    config.ChiselConfig.TLSKey,
+			KeepAlive: config.ChiselConfig.KeepAlive,
+		}
+		chiselTransport, err := transport.NewChiselServerTransport(chiselConfig, log)
+		if err != nil {
+			log.Error().Err(err).Msg("Failed to create Chisel transport, falling back to WebSocket only")
+		} else {
+			server.chiselTransport = chiselTransport
+			log.Info().
+				Str("host", config.ChiselConfig.Host).
+				Int("port", config.ChiselConfig.Port).
+				Msg("Chisel transport enabled for data transfer")
+		}
+	}
+
+	return server
 }
 
 // Start starts the server.
 func (s *Server) Start(ctx context.Context) error {
 	if !atomic.CompareAndSwapInt32(&s.running, 0, 1) {
 		return fmt.Errorf("server already running")
+	}
+
+	// Start Chisel transport if enabled
+	if s.chiselTransport != nil {
+		if err := s.chiselTransport.Start(ctx); err != nil {
+			s.log.Error().Err(err).Msg("Failed to start Chisel transport")
+			// Continue without Chisel - will use WebSocket only
+		} else {
+			s.log.Info().
+				Str("fingerprint", s.chiselTransport.GetFingerprint()).
+				Msg("Chisel transport started")
+		}
 	}
 
 	transportConfig := &transport.ServerConfig{
@@ -249,6 +310,13 @@ func (s *Server) Stop(ctx context.Context) error {
 	}
 
 	close(s.shutdown)
+
+	// Stop Chisel transport
+	if s.chiselTransport != nil {
+		if err := s.chiselTransport.Stop(); err != nil {
+			s.log.Debug().Err(err).Msg("Error stopping Chisel transport")
+		}
+	}
 
 	// Shutdown HTTP servers
 	if s.upstreamServer != nil {

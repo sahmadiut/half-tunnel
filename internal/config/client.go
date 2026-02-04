@@ -74,6 +74,25 @@ type ClientTunnelConfig struct {
 	Reconnect  ReconnectConfig        `mapstructure:"reconnect"`
 	Connection ClientConnectionConfig `mapstructure:"connection"`
 	Encryption EncryptionConfig       `mapstructure:"encryption"`
+	Chisel     ChiselClientConfig     `mapstructure:"chisel"`
+}
+
+// ChiselClientConfig holds Chisel transport settings for client.
+type ChiselClientConfig struct {
+	// Enabled controls whether Chisel transport is used for data transfer
+	Enabled bool `mapstructure:"enabled"`
+	// ServerURL is the URL for the Chisel server (e.g., "https://server:2087")
+	ServerURL string `mapstructure:"server_url"`
+	// Fingerprint is the expected server fingerprint for verification
+	Fingerprint string `mapstructure:"fingerprint"`
+	// PortStart is the starting port for local Chisel tunnels
+	PortStart int `mapstructure:"port_start"`
+	// PortEnd is the ending port for local Chisel tunnels
+	PortEnd int `mapstructure:"port_end"`
+	// KeepAlive interval for Chisel connections
+	KeepAlive time.Duration `mapstructure:"keepalive"`
+	// TLSCert is the path to CA certificate file for server verification
+	TLSCert string `mapstructure:"tls_cert"`
 }
 
 // ReconnectConfig holds reconnection strategy settings.
@@ -164,6 +183,13 @@ func DefaultClientConfig() *ClientConfig {
 			Encryption: EncryptionConfig{
 				Enabled:   true,
 				Algorithm: "aes-256-gcm",
+			},
+			Chisel: ChiselClientConfig{
+				Enabled:   false, // Disabled by default
+				ServerURL: "",
+				PortStart: 9000,
+				PortEnd:   9999,
+				KeepAlive: 25 * time.Second,
 			},
 		},
 		DNS: DNSConfig{
@@ -269,6 +295,13 @@ func setClientDefaults(v *viper.Viper) {
 	v.SetDefault("tunnel.connection.ip_version", defaults.Tunnel.Connection.IPVersion)
 	v.SetDefault("tunnel.encryption.enabled", defaults.Tunnel.Encryption.Enabled)
 	v.SetDefault("tunnel.encryption.algorithm", defaults.Tunnel.Encryption.Algorithm)
+	v.SetDefault("tunnel.chisel.enabled", defaults.Tunnel.Chisel.Enabled)
+	v.SetDefault("tunnel.chisel.server_url", defaults.Tunnel.Chisel.ServerURL)
+	v.SetDefault("tunnel.chisel.fingerprint", defaults.Tunnel.Chisel.Fingerprint)
+	v.SetDefault("tunnel.chisel.port_start", defaults.Tunnel.Chisel.PortStart)
+	v.SetDefault("tunnel.chisel.port_end", defaults.Tunnel.Chisel.PortEnd)
+	v.SetDefault("tunnel.chisel.keepalive", defaults.Tunnel.Chisel.KeepAlive)
+	v.SetDefault("tunnel.chisel.tls_cert", defaults.Tunnel.Chisel.TLSCert)
 
 	v.SetDefault("dns.enabled", defaults.DNS.Enabled)
 	v.SetDefault("dns.listen_host", defaults.DNS.ListenHost)

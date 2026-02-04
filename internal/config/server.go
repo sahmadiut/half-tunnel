@@ -53,6 +53,27 @@ type ServerTunnelConfig struct {
 	Session    ServerSessionConfig    `mapstructure:"session"`
 	Connection ServerConnectionConfig `mapstructure:"connection"`
 	Encryption EncryptionConfig       `mapstructure:"encryption"`
+	Chisel     ChiselServerConfig     `mapstructure:"chisel"`
+}
+
+// ChiselServerConfig holds Chisel transport settings for server.
+type ChiselServerConfig struct {
+	// Enabled controls whether Chisel transport is used for data transfer
+	Enabled bool `mapstructure:"enabled"`
+	// Host is the listening host for Chisel server
+	Host string `mapstructure:"host"`
+	// Port is the listening port for Chisel server
+	Port int `mapstructure:"port"`
+	// PortStart is the starting port for remote tunnels
+	PortStart int `mapstructure:"port_start"`
+	// PortEnd is the ending port for remote tunnels
+	PortEnd int `mapstructure:"port_end"`
+	// TLSCert is the path to TLS certificate file
+	TLSCert string `mapstructure:"tls_cert"`
+	// TLSKey is the path to TLS key file
+	TLSKey string `mapstructure:"tls_key"`
+	// KeepAlive interval for Chisel connections
+	KeepAlive time.Duration `mapstructure:"keepalive"`
 }
 
 // ServerSessionConfig holds session management settings for server.
@@ -152,6 +173,14 @@ func DefaultServerConfig() *ServerConfig {
 				Enabled:   true,
 				Algorithm: "aes-256-gcm",
 			},
+			Chisel: ChiselServerConfig{
+				Enabled:   false, // Disabled by default
+				Host:      "0.0.0.0",
+				Port:      2087,
+				PortStart: 9000,
+				PortEnd:   9999,
+				KeepAlive: 25 * time.Second,
+			},
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -249,6 +278,14 @@ func setServerDefaults(v *viper.Viper) {
 	v.SetDefault("tunnel.connection.tcp_nodelay", defaults.Tunnel.Connection.TCPNoDelay)
 	v.SetDefault("tunnel.encryption.enabled", defaults.Tunnel.Encryption.Enabled)
 	v.SetDefault("tunnel.encryption.algorithm", defaults.Tunnel.Encryption.Algorithm)
+	v.SetDefault("tunnel.chisel.enabled", defaults.Tunnel.Chisel.Enabled)
+	v.SetDefault("tunnel.chisel.host", defaults.Tunnel.Chisel.Host)
+	v.SetDefault("tunnel.chisel.port", defaults.Tunnel.Chisel.Port)
+	v.SetDefault("tunnel.chisel.port_start", defaults.Tunnel.Chisel.PortStart)
+	v.SetDefault("tunnel.chisel.port_end", defaults.Tunnel.Chisel.PortEnd)
+	v.SetDefault("tunnel.chisel.tls_cert", defaults.Tunnel.Chisel.TLSCert)
+	v.SetDefault("tunnel.chisel.tls_key", defaults.Tunnel.Chisel.TLSKey)
+	v.SetDefault("tunnel.chisel.keepalive", defaults.Tunnel.Chisel.KeepAlive)
 
 	v.SetDefault("logging.level", defaults.Logging.Level)
 	v.SetDefault("logging.format", defaults.Logging.Format)
