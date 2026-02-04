@@ -96,69 +96,28 @@ docker build -t my-ht-server:latest -f deployments/Dockerfile.server .
 
 ## Systemd Service
 
+Install services using the CLI. Client and server are installed separately, so you can deploy only what you need on each host.
+
 ### Server Service
 
-Create `/etc/systemd/system/half-tunnel-server.service`:
-
-```ini
-[Unit]
-Description=Half-Tunnel Server
-Documentation=https://github.com/sahmadiut/half-tunnel
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/ht-server -config /etc/half-tunnel/server.yml
-Restart=always
-RestartSec=5
-User=root
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo mkdir -p /etc/half-tunnel
+sudo cp server.yml /etc/half-tunnel/server.yml
+sudo /usr/local/bin/half-tunnel service install --type server
+sudo systemctl enable half-tunnel-server
+sudo systemctl start half-tunnel-server
+sudo systemctl status half-tunnel-server
 ```
 
 ### Client Service
 
-Create `/etc/systemd/system/half-tunnel-client.service`:
-
-```ini
-[Unit]
-Description=Half-Tunnel Client
-Documentation=https://github.com/sahmadiut/half-tunnel
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/ht-client -config /etc/half-tunnel/client.yml
-Restart=always
-RestartSec=5
-User=root
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Enable and Start
-
 ```bash
-# Create config directory
 sudo mkdir -p /etc/half-tunnel
-
-# Copy your configuration
-sudo cp server.yml /etc/half-tunnel/
-sudo cp client.yml /etc/half-tunnel/
-
-# Reload systemd
-sudo systemctl daemon-reload
-
-# Enable and start services
-sudo systemctl enable half-tunnel-server
-sudo systemctl start half-tunnel-server
-
-# Check status
-sudo systemctl status half-tunnel-server
+sudo cp client.yml /etc/half-tunnel/client.yml
+sudo /usr/local/bin/half-tunnel service install --type client
+sudo systemctl enable half-tunnel-client
+sudo systemctl start half-tunnel-client
+sudo systemctl status half-tunnel-client
 ```
 
 ## Production Deployment

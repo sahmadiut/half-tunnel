@@ -33,6 +33,8 @@ func main() {
 	switch os.Args[1] {
 	case "config":
 		runConfigCommand(os.Args[2:])
+	case "service":
+		runServiceCommand(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -50,6 +52,7 @@ Usage:
 
 Commands:
   config    Manage configuration files (generate, validate, sample)
+  service   Manage systemd services (install, start, stop, status, logs)
   help      Show this help message
 
 Flags:
