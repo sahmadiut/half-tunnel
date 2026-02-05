@@ -102,7 +102,7 @@ func Install(cfg *ServiceConfig) error {
 		WorkingDir string
 	}{
 		Type:       cfg.Type,
-		TypeTitle:  strings.Title(string(cfg.Type)),
+		TypeTitle:  toTitleCase(string(cfg.Type)),
 		BinaryPath: cfg.BinaryPath,
 		ConfigPath: cfg.ConfigPath,
 		User:       cfg.User,
@@ -249,6 +249,14 @@ func runSystemctl(args ...string) error {
 func isSystemdAvailable() bool {
 	_, err := os.Stat("/run/systemd/system")
 	return err == nil
+}
+
+// toTitleCase converts a string to title case (first letter uppercase).
+func toTitleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // GetDefaultBinaryPath returns the default binary path for the given service type.
