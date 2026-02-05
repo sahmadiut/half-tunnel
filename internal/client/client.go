@@ -475,11 +475,12 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 		return
 	}
 
-	// Write data to the client connection
+	// Handle data packets using the multiplexer for out-of-order reassembly
 	if pkt.IsData() && len(pkt.Payload) > 0 {
 		// Per-packet DEBUG logging (see package doc for performance notes)
 		c.log.Debug().
 			Uint32("stream_id", pkt.StreamID).
+			Uint32("seq_num", pkt.SeqNum).
 			Int("bytes", len(pkt.Payload)).
 			Str("direction", "from_server").
 			Msg("Data transfer")
@@ -487,11 +488,34 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 		// Record data flow for monitoring
 		c.dataFlowMonitor.RecordReceive(int64(len(pkt.Payload)))
 
-		if _, err := sc.conn.Write(pkt.Payload); err != nil {
+		// Use the multiplexer to handle out-of-order packet reassembly.
+		// The multiplexer's stream buffer stores packets in sequence order,
+		// so packets that arrive out-of-order are buffered until the missing
+		// packets arrive and the sequence is complete.
+		if err := c.mux.HandlePacket(pkt); err != nil {
 			c.log.Error().Err(err).
 				Uint32("stream_id", pkt.StreamID).
-				Msg("Error writing to client")
-			c.closeStream(pkt.StreamID)
+				Msg("Error handling packet in multiplexer")
+			return
+		}
+
+		// Read reassembled data from the stream buffer (in correct order)
+		data, err := c.mux.ReadStream(pkt.StreamID)
+		if err != nil {
+			c.log.Error().Err(err).
+				Uint32("stream_id", pkt.StreamID).
+				Msg("Error reading from stream buffer")
+			return
+		}
+
+		// Write reassembled data to the client connection
+		if len(data) > 0 {
+			if _, err := sc.conn.Write(data); err != nil {
+				c.log.Error().Err(err).
+					Uint32("stream_id", pkt.StreamID).
+					Msg("Error writing to client")
+				c.closeStream(pkt.StreamID)
+			}
 		}
 	}
 }
