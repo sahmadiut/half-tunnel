@@ -2,10 +2,17 @@
 package session
 
 import (
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+)
+
+// Errors for session operations
+var (
+	// ErrStreamAlreadyResumed indicates the stream has already progressed beyond the saved state.
+	ErrStreamAlreadyResumed = errors.New("stream already resumed or progressed beyond saved state")
 )
 
 // State represents the current state of a stream.
@@ -36,25 +43,45 @@ func (s State) String() string {
 
 // Stream represents a logical connection within a session.
 type Stream struct {
-	ID        uint32
-	State     State
-	SeqNum    uint32 // Next sequence number to send
-	AckNum    uint32 // Next expected sequence number
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	mu        sync.RWMutex
+	ID           uint32
+	State        State
+	SeqNum       uint32 // Next sequence number to send
+	AckNum       uint32 // Next expected sequence number
+	BytesSent    int64  // Total bytes sent on this stream
+	BytesRecv    int64  // Total bytes received on this stream
+	LastActivity time.Time
+	Checksum     uint32 // Rolling checksum for data integrity verification
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	mu           sync.RWMutex
+}
+
+// StreamState represents the serializable state of a stream for persistence and resumption.
+type StreamState struct {
+	ID           uint32
+	State        State
+	SeqNum       uint32
+	AckNum       uint32
+	BytesSent    int64
+	BytesRecv    int64
+	LastActivity time.Time
+	Checksum     uint32
 }
 
 // NewStream creates a new stream with the given ID.
 func NewStream(id uint32) *Stream {
 	now := time.Now()
 	return &Stream{
-		ID:        id,
-		State:     StateOpen,
-		SeqNum:    0,
-		AckNum:    0,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           id,
+		State:        StateOpen,
+		SeqNum:       0,
+		AckNum:       0,
+		BytesSent:    0,
+		BytesRecv:    0,
+		LastActivity: now,
+		Checksum:     0,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 }
 
@@ -91,6 +118,66 @@ func (s *Stream) UpdateAckNum(ack uint32) {
 		s.AckNum = ack
 		s.UpdatedAt = time.Now()
 	}
+}
+
+// RecordSend records bytes sent on this stream and updates the checksum.
+func (s *Stream) RecordSend(bytes int64, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.BytesSent += bytes
+	now := time.Now()
+	s.LastActivity = now
+	s.UpdatedAt = now
+	// Update rolling checksum with sent data
+	s.Checksum = updateChecksum(s.Checksum, data)
+}
+
+// RecordReceive records bytes received on this stream and updates the checksum.
+func (s *Stream) RecordReceive(bytes int64, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.BytesRecv += bytes
+	now := time.Now()
+	s.LastActivity = now
+	s.UpdatedAt = now
+	// Update rolling checksum with received data
+	s.Checksum = updateChecksum(s.Checksum, data)
+}
+
+// GetStreamState returns a snapshot of the stream state for persistence.
+func (s *Stream) GetStreamState() StreamState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return StreamState{
+		ID:           s.ID,
+		State:        s.State,
+		SeqNum:       s.SeqNum,
+		AckNum:       s.AckNum,
+		BytesSent:    s.BytesSent,
+		BytesRecv:    s.BytesRecv,
+		LastActivity: s.LastActivity,
+		Checksum:     s.Checksum,
+	}
+}
+
+// GetChecksum returns the current checksum value.
+func (s *Stream) GetChecksum() uint32 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Checksum
+}
+
+// updateChecksum updates a rolling checksum with new data.
+// This is a simple rolling checksum for data integrity tracking, not a cryptographic hash.
+func updateChecksum(current uint32, data []byte) uint32 {
+	if len(data) == 0 {
+		return current
+	}
+	// Simple rolling checksum algorithm
+	for _, b := range data {
+		current = (current << 8) ^ uint32(b) ^ (current >> 24)
+	}
+	return current
 }
 
 // Session represents a client session with upstream and downstream state.
@@ -173,4 +260,56 @@ func (s *Session) Touch() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.UpdatedAt = time.Now()
+}
+
+// ResumeStream restores a stream from a saved state, allowing stream resumption after reconnection.
+// If the stream already exists and has progressed beyond the saved state, the resumption is skipped.
+func (s *Session) ResumeStream(state StreamState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	existing, exists := s.streams[state.ID]
+	if exists {
+		// Check if existing stream has progressed beyond saved state
+		existing.mu.RLock()
+		if existing.SeqNum > state.SeqNum || existing.AckNum > state.AckNum {
+			existing.mu.RUnlock()
+			return ErrStreamAlreadyResumed
+		}
+		existing.mu.RUnlock()
+	}
+
+	// Create or update stream from saved state
+	now := time.Now()
+	stream := &Stream{
+		ID:           state.ID,
+		State:        state.State,
+		SeqNum:       state.SeqNum,
+		AckNum:       state.AckNum,
+		BytesSent:    state.BytesSent,
+		BytesRecv:    state.BytesRecv,
+		LastActivity: state.LastActivity,
+		Checksum:     state.Checksum,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	// If the stream existed, preserve the original creation time
+	if exists {
+		stream.CreatedAt = existing.CreatedAt
+	}
+	s.streams[state.ID] = stream
+	s.UpdatedAt = now
+	return nil
+}
+
+// GetAllStreamStates returns the state of all active streams for persistence.
+func (s *Session) GetAllStreamStates() []StreamState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	states := make([]StreamState, 0, len(s.streams))
+	for _, stream := range s.streams {
+		states = append(states, stream.GetStreamState())
+	}
+	return states
 }

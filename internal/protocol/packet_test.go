@@ -324,3 +324,164 @@ func BenchmarkUnmarshal(b *testing.B) {
 		_, _ = Unmarshal(data)
 	}
 }
+
+// Tests for Phase 3 checksum functionality
+
+func TestPacket_CalculateChecksum(t *testing.T) {
+	sessionID := uuid.New()
+
+	// Test with payload
+	payload := []byte("hello world")
+	pkt, _ := NewPacket(sessionID, 1, FlagData, payload)
+
+	checksum := pkt.CalculateChecksum()
+	if checksum == 0 {
+		t.Error("expected non-zero checksum for non-empty payload")
+	}
+
+	// Same payload should produce same checksum
+	checksum2 := pkt.CalculateChecksum()
+	if checksum != checksum2 {
+		t.Error("expected same checksum for same payload")
+	}
+
+	// Different payload should produce different checksum
+	pkt2, _ := NewPacket(sessionID, 1, FlagData, []byte("different"))
+	checksum3 := pkt2.CalculateChecksum()
+	if checksum == checksum3 {
+		t.Error("expected different checksum for different payload")
+	}
+}
+
+func TestPacket_CalculateChecksumEmpty(t *testing.T) {
+	sessionID := uuid.New()
+
+	// Empty payload should return 0
+	pkt, _ := NewPacket(sessionID, 1, FlagKeepAlive, nil)
+	checksum := pkt.CalculateChecksum()
+	if checksum != 0 {
+		t.Errorf("expected checksum 0 for empty payload, got %d", checksum)
+	}
+}
+
+func TestPacket_VerifyChecksum(t *testing.T) {
+	sessionID := uuid.New()
+	payload := []byte("test data for checksum")
+
+	pkt, _ := NewPacket(sessionID, 1, FlagData, payload)
+	checksum := pkt.CalculateChecksum()
+
+	// Verify correct checksum
+	if !pkt.VerifyChecksum(checksum) {
+		t.Error("expected checksum verification to pass")
+	}
+
+	// Verify wrong checksum
+	if pkt.VerifyChecksum(checksum + 1) {
+		t.Error("expected checksum verification to fail with wrong checksum")
+	}
+}
+
+func TestPacket_CalculateHeaderChecksum(t *testing.T) {
+	sessionID := uuid.New()
+	payload := []byte("test payload")
+
+	pkt, _ := NewPacket(sessionID, 1, FlagData, payload)
+	pkt.SeqNum = 100
+
+	headerChecksum := pkt.CalculateHeaderChecksum()
+	if headerChecksum == 0 {
+		t.Error("expected non-zero header checksum")
+	}
+
+	// Same packet should produce same checksum
+	headerChecksum2 := pkt.CalculateHeaderChecksum()
+	if headerChecksum != headerChecksum2 {
+		t.Error("expected same header checksum for same packet")
+	}
+
+	// Different stream ID should produce different checksum
+	pkt2, _ := NewPacket(sessionID, 2, FlagData, payload) // Different stream ID
+	pkt2.SeqNum = 100
+	headerChecksum3 := pkt2.CalculateHeaderChecksum()
+	if headerChecksum == headerChecksum3 {
+		t.Error("expected different header checksum for different stream ID")
+	}
+
+	// Different seq num should produce different checksum
+	pkt3, _ := NewPacket(sessionID, 1, FlagData, payload)
+	pkt3.SeqNum = 200 // Different sequence number
+	headerChecksum4 := pkt3.CalculateHeaderChecksum()
+	if headerChecksum == headerChecksum4 {
+		t.Error("expected different header checksum for different sequence number")
+	}
+}
+
+func TestPacket_VerifyHeaderChecksum(t *testing.T) {
+	sessionID := uuid.New()
+	payload := []byte("test data")
+
+	pkt, _ := NewPacket(sessionID, 5, FlagData, payload)
+	pkt.SeqNum = 42
+
+	headerChecksum := pkt.CalculateHeaderChecksum()
+
+	// Verify correct checksum
+	if !pkt.VerifyHeaderChecksum(headerChecksum) {
+		t.Error("expected header checksum verification to pass")
+	}
+
+	// Verify wrong checksum
+	if pkt.VerifyHeaderChecksum(headerChecksum ^ 0x12345678) {
+		t.Error("expected header checksum verification to fail with wrong checksum")
+	}
+}
+
+func TestPacket_ChecksumAfterModification(t *testing.T) {
+	sessionID := uuid.New()
+	payload := []byte("original")
+
+	pkt, _ := NewPacket(sessionID, 1, FlagData, payload)
+	originalChecksum := pkt.CalculateChecksum()
+
+	// Modify payload
+	pkt.Payload = []byte("modified")
+	pkt.PayloadLen = uint16(len(pkt.Payload))
+
+	modifiedChecksum := pkt.CalculateChecksum()
+
+	if originalChecksum == modifiedChecksum {
+		t.Error("expected checksum to change after payload modification")
+	}
+
+	// Verify original checksum no longer works
+	if pkt.VerifyChecksum(originalChecksum) {
+		t.Error("expected original checksum to fail after modification")
+	}
+}
+
+func BenchmarkCalculateChecksum(b *testing.B) {
+	sessionID := uuid.New()
+	payload := make([]byte, 1024)
+	for i := range payload {
+		payload[i] = byte(i % 256)
+	}
+	pkt, _ := NewPacket(sessionID, 1, FlagData, payload)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = pkt.CalculateChecksum()
+	}
+}
+
+func BenchmarkCalculateHeaderChecksum(b *testing.B) {
+	sessionID := uuid.New()
+	payload := make([]byte, 1024)
+	pkt, _ := NewPacket(sessionID, 1, FlagData, payload)
+	pkt.SeqNum = 12345
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = pkt.CalculateHeaderChecksum()
+	}
+}

@@ -298,3 +298,191 @@ func TestState_String(t *testing.T) {
 		}
 	}
 }
+
+// Tests for DestinationBreaker
+
+func TestDestinationBreaker_New(t *testing.T) {
+	db := NewDestinationBreaker(nil)
+	if db == nil {
+		t.Fatal("expected non-nil DestinationBreaker")
+	}
+	if db.Count() != 0 {
+		t.Errorf("expected 0 destinations, got %d", db.Count())
+	}
+}
+
+func TestDestinationBreaker_Get(t *testing.T) {
+	db := NewDestinationBreaker(DefaultConfig())
+
+	// First get creates a new breaker
+	cb1 := db.Get("example.com:80")
+	if cb1 == nil {
+		t.Fatal("expected non-nil circuit breaker")
+	}
+	if db.Count() != 1 {
+		t.Errorf("expected 1 destination, got %d", db.Count())
+	}
+
+	// Second get returns the same breaker
+	cb2 := db.Get("example.com:80")
+	if cb1 != cb2 {
+		t.Error("expected same circuit breaker instance")
+	}
+
+	// Different destination creates new breaker
+	cb3 := db.Get("other.com:443")
+	if cb1 == cb3 {
+		t.Error("expected different circuit breaker instance")
+	}
+	if db.Count() != 2 {
+		t.Errorf("expected 2 destinations, got %d", db.Count())
+	}
+}
+
+func TestDestinationBreaker_Remove(t *testing.T) {
+	db := NewDestinationBreaker(DefaultConfig())
+
+	db.Get("example.com:80")
+	db.Get("other.com:443")
+	if db.Count() != 2 {
+		t.Fatalf("expected 2 destinations, got %d", db.Count())
+	}
+
+	db.Remove("example.com:80")
+	if db.Count() != 1 {
+		t.Errorf("expected 1 destination after removal, got %d", db.Count())
+	}
+}
+
+func TestDestinationBreaker_IsAllowed(t *testing.T) {
+	config := &Config{
+		MaxFailures:         2,
+		Timeout:             1 * time.Second,
+		MaxHalfOpenRequests: 1,
+	}
+	db := NewDestinationBreaker(config)
+
+	// Initially allowed
+	if !db.IsAllowed("example.com:80") {
+		t.Error("expected request to be allowed initially")
+	}
+
+	// Record failures until circuit opens
+	db.RecordFailure("example.com:80")
+	db.RecordFailure("example.com:80")
+
+	// Should not be allowed now
+	if db.IsAllowed("example.com:80") {
+		t.Error("expected request to be denied after failures")
+	}
+
+	// Different destination should still be allowed
+	if !db.IsAllowed("other.com:443") {
+		t.Error("expected different destination to still be allowed")
+	}
+}
+
+func TestDestinationBreaker_Reset(t *testing.T) {
+	config := &Config{
+		MaxFailures:         1,
+		Timeout:             1 * time.Second,
+		MaxHalfOpenRequests: 1,
+	}
+	db := NewDestinationBreaker(config)
+
+	// Open circuits for multiple destinations
+	db.RecordFailure("example.com:80")
+	db.RecordFailure("other.com:443")
+
+	if db.IsAllowed("example.com:80") || db.IsAllowed("other.com:443") {
+		t.Error("expected both circuits to be open")
+	}
+
+	// Reset all
+	db.Reset()
+
+	if !db.IsAllowed("example.com:80") || !db.IsAllowed("other.com:443") {
+		t.Error("expected both circuits to be closed after reset")
+	}
+}
+
+func TestDestinationBreaker_ResetDestination(t *testing.T) {
+	config := &Config{
+		MaxFailures:         1,
+		Timeout:             1 * time.Second,
+		MaxHalfOpenRequests: 1,
+	}
+	db := NewDestinationBreaker(config)
+
+	// Open circuits for multiple destinations
+	db.RecordFailure("example.com:80")
+	db.RecordFailure("other.com:443")
+
+	// Reset only one
+	db.ResetDestination("example.com:80")
+
+	if !db.IsAllowed("example.com:80") {
+		t.Error("expected example.com:80 to be allowed after reset")
+	}
+	if db.IsAllowed("other.com:443") {
+		t.Error("expected other.com:443 to still be denied")
+	}
+}
+
+func TestDestinationBreaker_Execute(t *testing.T) {
+	db := NewDestinationBreaker(DefaultConfig())
+
+	err := db.Execute("example.com:80", func() error {
+		return nil
+	})
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	expectedErr := errors.New("test error")
+	err = db.Execute("example.com:80", func() error {
+		return expectedErr
+	})
+	if err != expectedErr {
+		t.Errorf("expected %v, got %v", expectedErr, err)
+	}
+}
+
+func TestDestinationBreaker_ExecuteWithContext(t *testing.T) {
+	db := NewDestinationBreaker(DefaultConfig())
+	ctx := context.Background()
+
+	err := db.ExecuteWithContext(ctx, "example.com:80", func(ctx context.Context) error {
+		return nil
+	})
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestDestinationBreaker_AllStats(t *testing.T) {
+	config := &Config{
+		MaxFailures:         3,
+		Timeout:             1 * time.Second,
+		MaxHalfOpenRequests: 1,
+	}
+	db := NewDestinationBreaker(config)
+
+	db.RecordFailure("example.com:80")
+	db.RecordFailure("example.com:80")
+	db.RecordSuccess("other.com:443")
+
+	stats := db.AllStats()
+	if len(stats) != 2 {
+		t.Fatalf("expected 2 destination stats, got %d", len(stats))
+	}
+
+	// Find stats for example.com:80
+	for _, s := range stats {
+		if s.Destination == "example.com:80" {
+			if s.Stats.Failures != 2 {
+				t.Errorf("expected 2 failures for example.com:80, got %d", s.Stats.Failures)
+			}
+		}
+	}
+}
