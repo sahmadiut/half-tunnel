@@ -92,6 +92,53 @@ get_latest_version() {
     info "Latest version: $VERSION"
 }
 
+# Check and stop existing services
+stop_existing_services() {
+    # Check for running processes
+    if pgrep -f "ht-server" >/dev/null 2>&1 || pgrep -f "ht-client" >/dev/null 2>&1; then
+        warn "Existing Half-Tunnel processes detected."
+        
+        # Ask for permission if interactive
+        if [ -t 0 ]; then
+            read -p "Do you want to force stop/kill existing services to continue? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                error "Installation aborted by user."
+            fi
+        fi
+        
+        info "Stopping services and killing processes..."
+        
+        local _sudo=""
+        if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null; then
+            _sudo="sudo"
+        fi
+
+        # 1. Stop via Systemd (if applicable)
+        if command -v systemctl >/dev/null; then
+            $_sudo systemctl stop half-tunnel-server 2>/dev/null || true
+            $_sudo systemctl stop half-tunnel-client 2>/dev/null || true
+        fi
+
+        # 2. Force kill processes (ht-server, ht-client)
+        # Using pkill -9 to ensure they are killed as requested
+        # This covers /usr/local/bin/ht-server and /usr/local/bin/ht-client
+        if command -v pkill >/dev/null; then
+            $_sudo pkill -9 -f "ht-server" 2>/dev/null || true
+            $_sudo pkill -9 -f "ht-client" 2>/dev/null || true
+        else
+            # Fallback if pkill is missing
+            local pids
+            pids=$(pgrep -f "ht-server" || true)
+            if [ -n "$pids" ]; then $_sudo kill -9 $pids 2>/dev/null || true; fi
+            pids=$(pgrep -f "ht-client" || true)
+            if [ -n "$pids" ]; then $_sudo kill -9 $pids 2>/dev/null || true; fi
+        fi
+
+        success "Services stopped and processes killed."
+    fi
+}
+
 # Download and extract the binary
 download_and_install() {
     local tmp_dir
@@ -303,6 +350,7 @@ main() {
 
     detect_platform
     get_latest_version
+    stop_existing_services
     download_and_install
     verify_installation
     
