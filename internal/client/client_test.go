@@ -28,6 +28,12 @@ func TestDefaultConfig(t *testing.T) {
 	if config.ReconnectConfig == nil {
 		t.Error("Expected reconnect config to be set")
 	}
+	if config.ExitOnPortInUse {
+		t.Error("Expected ExitOnPortInUse to default to false")
+	}
+	if config.ListenOnConnect {
+		t.Error("Expected ListenOnConnect to default to false")
+	}
 }
 
 func TestNewClient(t *testing.T) {
@@ -123,6 +129,36 @@ func TestClientNotRunning(t *testing.T) {
 	err := client.Stop()
 	if err != nil {
 		t.Errorf("Stop() on non-running client should not error: %v", err)
+	}
+}
+
+func TestStartLocalListenersExitOnPortInUse(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to allocate listener: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	config := DefaultConfig()
+	config.SOCKS5Enabled = false
+	config.ExitOnPortInUse = true
+	config.PortForwards = []PortForward{
+		{
+			ListenHost: "127.0.0.1",
+			ListenPort: port,
+			RemoteHost: "127.0.0.1",
+			RemotePort: port,
+		},
+	}
+
+	client := New(config, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	if err := client.startLocalListeners(ctx); err == nil {
+		t.Fatal("Expected error when port is already in use")
 	}
 }
 

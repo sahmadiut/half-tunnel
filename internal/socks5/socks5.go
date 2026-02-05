@@ -26,9 +26,9 @@ const (
 	Version5 = 0x05
 
 	// Authentication methods
-	AuthNone           = 0x00
-	AuthUserPass       = 0x02
-	AuthNoAcceptable   = 0xFF
+	AuthNone         = 0x00
+	AuthUserPass     = 0x02
+	AuthNoAcceptable = 0xFF
 
 	// Commands
 	CmdConnect      = 0x01
@@ -41,10 +41,10 @@ const (
 	AddrTypeIPv6   = 0x04
 
 	// Reply codes
-	ReplySuccess           = 0x00
-	ReplyGeneralFailure    = 0x01
-	ReplyConnectionRefused = 0x05
-	ReplyCommandNotSupported = 0x07
+	ReplySuccess                 = 0x00
+	ReplyGeneralFailure          = 0x01
+	ReplyConnectionRefused       = 0x05
+	ReplyCommandNotSupported     = 0x07
 	ReplyAddressTypeNotSupported = 0x08
 )
 
@@ -94,7 +94,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	
+
+	return s.Serve(ctx, listener)
+}
+
+// Serve starts the SOCKS5 server using the provided listener.
+func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	s.mu.Lock()
 	s.listener = listener
 	s.mu.Unlock()

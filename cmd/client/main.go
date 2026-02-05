@@ -142,6 +142,8 @@ func main() {
 		SOCKS5Addr:       socks5Addr,
 		SOCKS5Enabled:    cfg.SOCKS5.Enabled,
 		PortForwards:     clientPortForwards,
+		ExitOnPortInUse:  cfg.Client.ExitOnPortInUse,
+		ListenOnConnect:  cfg.Client.ListenOnConnect,
 		ReconnectEnabled: cfg.Tunnel.Reconnect.Enabled,
 		ReconnectConfig: &retry.Config{
 			InitialDelay: cfg.Tunnel.Reconnect.InitialDelay,

@@ -21,6 +21,12 @@ func TestDefaultClientConfig(t *testing.T) {
 	if cfg.SOCKS5.ListenPort != 1080 {
 		t.Errorf("Expected SOCKS5 port 1080, got %d", cfg.SOCKS5.ListenPort)
 	}
+	if cfg.Client.ExitOnPortInUse {
+		t.Error("Expected exit_on_port_in_use to default to false")
+	}
+	if cfg.Client.ListenOnConnect {
+		t.Error("Expected listen_on_connect to default to false")
+	}
 }
 
 func TestClientConfigValidate(t *testing.T) {

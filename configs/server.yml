@@ -2,6 +2,8 @@
 server:
   # Server identification
   name: "exit-server-01"
+  # Exit when a listener port is already in use
+  exit_on_port_in_use: false
   
   # Upstream listener (Domain A) - receives client requests
   upstream:
