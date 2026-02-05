@@ -100,12 +100,14 @@ half-tunnel/
 ├── cmd/
 │   ├── client/          # Entry client binary
 │   ├── server/          # Exit server binary
+│   ├── ht/              # Service manager CLI
 │   └── half-tunnel/     # CLI tool
 ├── internal/
 │   ├── protocol/        # Packet format, serialization
 │   ├── transport/       # WebSocket managers
 │   ├── session/         # UUID-based session tracking
 │   ├── mux/             # Multiplexer for logical connections
+│   ├── service/         # Systemd service management
 │   └── config/          # Configuration loading
 ├── pkg/
 │   ├── crypto/          # Encryption utilities
@@ -116,6 +118,49 @@ half-tunnel/
 ├── test/                # Integration and E2E tests
 └── docs/                # Documentation
 ```
+
+## Service Management
+
+Half-Tunnel includes a service manager (`ht`) for easy systemd service management:
+
+### Quick Commands
+
+```bash
+# Client service
+ht c install --config /etc/half-tunnel/client.yml   # Install client service
+ht c start                                           # Start client
+ht c stop                                            # Stop client
+ht c restart                                         # Restart client
+ht c logs                                            # View logs (follow mode)
+ht c logs -n 50 --no-follow                         # View last 50 lines
+
+# Server service  
+ht s install --config /etc/half-tunnel/server.yml   # Install server service
+ht s start                                           # Start server
+ht s stop                                            # Stop server
+ht s restart                                         # Restart server
+ht s logs                                            # View logs (follow mode)
+
+# Enable auto-start on boot
+ht c enable
+ht s enable
+```
+
+### Hot Reload
+
+Both client and server support hot reload of configuration files:
+
+```bash
+# Enable hot reload when starting
+ht-client -config /etc/half-tunnel/client.yml -hot-reload
+ht-server -config /etc/half-tunnel/server.yml -hot-reload
+
+# Or send SIGHUP to reload config
+kill -HUP $(pgrep ht-client)
+kill -HUP $(pgrep ht-server)
+```
+
+When running as a systemd service, the service will automatically restart with the new configuration.
 
 ## Documentation
 

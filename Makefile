@@ -1,4 +1,4 @@
-.PHONY: all build build-client build-server build-cli test lint clean docker help validate-config
+.PHONY: all build build-client build-server build-cli build-ht test lint clean docker help validate-config
 
 # Build variables
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -18,7 +18,7 @@ BIN_DIR := bin
 all: lint test build
 
 # Build both client and server
-build: build-client build-server build-cli
+build: build-client build-server build-cli build-ht
 
 # Build client
 build-client:
@@ -37,6 +37,12 @@ build-cli:
 	@echo "Building CLI..."
 	@mkdir -p $(BIN_DIR)
 	$(GO) build $(LDFLAGS) -o $(BIN_DIR)/half-tunnel ./cmd/half-tunnel
+
+# Build service manager (ht)
+build-ht:
+	@echo "Building service manager..."
+	@mkdir -p $(BIN_DIR)
+	$(GO) build $(LDFLAGS) -o $(BIN_DIR)/ht ./cmd/ht
 
 # Run tests
 test:
@@ -110,10 +116,11 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all           - Run lint, test, and build"
-	@echo "  build         - Build client, server, and CLI"
+	@echo "  build         - Build client, server, CLI, and service manager"
 	@echo "  build-client  - Build client binary"
 	@echo "  build-server  - Build server binary"
 	@echo "  build-cli     - Build half-tunnel CLI binary"
+	@echo "  build-ht      - Build ht service manager binary"
 	@echo "  test          - Run tests with race detection"
 	@echo "  test-coverage - Run tests and generate coverage report"
 	@echo "  lint          - Run golangci-lint"

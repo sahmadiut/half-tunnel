@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/sahmadiut/half-tunnel/internal/config"
 	"github.com/sahmadiut/half-tunnel/internal/health"
 	"github.com/sahmadiut/half-tunnel/internal/metrics"
@@ -28,6 +29,7 @@ func main() {
 	// Parse command line flags
 	configPath := flag.String("config", "", "Path to configuration file")
 	showVersion := flag.Bool("version", false, "Show version information")
+	hotReload := flag.Bool("hot-reload", false, "Enable hot reload of configuration file")
 	flag.Parse()
 
 	if *showVersion {
@@ -67,20 +69,36 @@ func main() {
 		Str("version", version).
 		Str("upstream_addr", upstreamAddr).
 		Str("downstream_addr", downstreamAddr).
+		Bool("hot_reload", *hotReload).
 		Msg("Starting Half-Tunnel server")
 
 	// Set up context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
+	// Handle shutdown and reload signals
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	go func() {
-		sig := <-sigCh
-		log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
-		cancel()
+		for {
+			select {
+			case sig := <-sigCh:
+				switch sig {
+				case syscall.SIGHUP:
+					log.Info().Msg("Received SIGHUP, reloading configuration...")
+					log.Info().Msg("Config reload requested - restarting service")
+					cancel()
+					return
+				case syscall.SIGINT, syscall.SIGTERM:
+					log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
+					cancel()
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
 	}()
 
 	// Create server configuration
@@ -107,6 +125,43 @@ func main() {
 	}
 
 	log.Info().Msg("Server is ready")
+
+	// Start hot reload watcher if enabled
+	if *hotReload && *configPath != "" {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to create config watcher, hot reload disabled")
+		} else {
+			defer watcher.Close()
+			if err := watcher.Add(*configPath); err != nil {
+				log.Warn().Err(err).Str("path", *configPath).Msg("Failed to watch config file")
+			} else {
+				log.Info().Str("path", *configPath).Msg("Watching config file for changes")
+				go func() {
+					for {
+						select {
+						case event, ok := <-watcher.Events:
+							if !ok {
+								return
+							}
+							if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
+								log.Info().Str("path", event.Name).Msg("Config file changed, triggering reload...")
+								// Send SIGHUP to self to trigger reload
+								_ = syscall.Kill(syscall.Getpid(), syscall.SIGHUP)
+							}
+						case err, ok := <-watcher.Errors:
+							if !ok {
+								return
+							}
+							log.Warn().Err(err).Msg("Config watcher error")
+						case <-ctx.Done():
+							return
+						}
+					}
+				}()
+			}
+		}
+	}
 
 	var metricsServer *metrics.Server
 	if cfg.Observability.Metrics.Enabled {
