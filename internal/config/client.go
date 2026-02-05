@@ -24,9 +24,11 @@ type ClientConfig struct {
 
 // ClientSettings holds client-specific settings.
 type ClientSettings struct {
-	Name       string         `mapstructure:"name"`
-	Upstream   ClientEndpoint `mapstructure:"upstream"`
-	Downstream ClientEndpoint `mapstructure:"downstream"`
+	Name            string         `mapstructure:"name"`
+	ExitOnPortInUse bool           `mapstructure:"exit_on_port_in_use"`
+	ListenOnConnect bool           `mapstructure:"listen_on_connect"`
+	Upstream        ClientEndpoint `mapstructure:"upstream"`
+	Downstream      ClientEndpoint `mapstructure:"downstream"`
 }
 
 // ClientEndpoint defines a client connection endpoint.
@@ -109,7 +111,9 @@ type ClientObservConfig struct {
 func DefaultClientConfig() *ClientConfig {
 	return &ClientConfig{
 		Client: ClientSettings{
-			Name: "entry-client-01",
+			Name:            "entry-client-01",
+			ExitOnPortInUse: false,
+			ListenOnConnect: false,
 			Upstream: ClientEndpoint{
 				URL: "wss://domain-a.example.com:8443/ws/upstream",
 				TLS: ClientTLSConfig{
@@ -231,6 +235,8 @@ func setClientDefaults(v *viper.Viper) {
 	defaults := DefaultClientConfig()
 
 	v.SetDefault("client.name", defaults.Client.Name)
+	v.SetDefault("client.exit_on_port_in_use", defaults.Client.ExitOnPortInUse)
+	v.SetDefault("client.listen_on_connect", defaults.Client.ListenOnConnect)
 	v.SetDefault("client.upstream.url", defaults.Client.Upstream.URL)
 	v.SetDefault("client.upstream.tls.enabled", defaults.Client.Upstream.TLS.Enabled)
 	v.SetDefault("client.upstream.tls.skip_verify", defaults.Client.Upstream.TLS.SkipVerify)

@@ -2,6 +2,10 @@
 client:
   # Client identification
   name: "entry-client-01"
+  # Exit when a local listener port is already in use
+  exit_on_port_in_use: false
+  # Only start SOCKS5/port forwards after tunnel connection is established
+  listen_on_connect: false
   
   # Upstream connection (Domain A) - sends requests to server
   upstream:

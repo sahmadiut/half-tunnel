@@ -21,9 +21,10 @@ type ServerConfig struct {
 
 // ServerSettings holds server-specific settings.
 type ServerSettings struct {
-	Name       string         `mapstructure:"name"`
-	Upstream   ServerEndpoint `mapstructure:"upstream"`
-	Downstream ServerEndpoint `mapstructure:"downstream"`
+	Name            string         `mapstructure:"name"`
+	ExitOnPortInUse bool           `mapstructure:"exit_on_port_in_use"`
+	Upstream        ServerEndpoint `mapstructure:"upstream"`
+	Downstream      ServerEndpoint `mapstructure:"downstream"`
 }
 
 // ServerEndpoint defines a server listener endpoint.
@@ -106,7 +107,8 @@ type HealthConfig struct {
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
 		Server: ServerSettings{
-			Name: "exit-server-01",
+			Name:            "exit-server-01",
+			ExitOnPortInUse: false,
 			Upstream: ServerEndpoint{
 				Host: "0.0.0.0",
 				Port: 8443,
@@ -222,6 +224,7 @@ func setServerDefaults(v *viper.Viper) {
 	defaults := DefaultServerConfig()
 
 	v.SetDefault("server.name", defaults.Server.Name)
+	v.SetDefault("server.exit_on_port_in_use", defaults.Server.ExitOnPortInUse)
 	v.SetDefault("server.upstream.host", defaults.Server.Upstream.Host)
 	v.SetDefault("server.upstream.port", defaults.Server.Upstream.Port)
 	v.SetDefault("server.upstream.path", defaults.Server.Upstream.Path)

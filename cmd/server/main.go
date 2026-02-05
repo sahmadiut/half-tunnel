@@ -109,6 +109,7 @@ func main() {
 		DownstreamAddr:  downstreamAddr,
 		DownstreamPath:  cfg.Server.Downstream.Path,
 		DownstreamTLS:   server.TLSConfig{Enabled: cfg.Server.Downstream.TLS.Enabled, CertFile: cfg.Server.Downstream.TLS.CertFile, KeyFile: cfg.Server.Downstream.TLS.KeyFile},
+		ExitOnPortInUse: cfg.Server.ExitOnPortInUse,
 		SessionTimeout:  cfg.Tunnel.Session.Timeout,
 		MaxSessions:     cfg.Tunnel.Session.MaxSessions,
 		ReadBufferSize:  cfg.Tunnel.Connection.ReadBufferSize,

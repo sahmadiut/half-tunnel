@@ -23,21 +23,21 @@ type ConfigGenerator struct {
 type GenerateOptions struct {
 	// Common options
 	OutputPath string
-	
+
 	// Server options
 	UpstreamPort   int
 	DownstreamPort int
 	TLSCert        string
 	TLSKey         string
 	ServerName     string
-	
+
 	// Client options
-	UpstreamURL    string
-	DownstreamURL  string
-	PortForwards   []string
-	SOCKS5Port     int
-	ClientName     string
-	EnableSOCKS5   bool
+	UpstreamURL   string
+	DownstreamURL string
+	PortForwards  []string
+	SOCKS5Port    int
+	ClientName    string
+	EnableSOCKS5  bool
 }
 
 // NewConfigGenerator creates a new config generator.
@@ -62,47 +62,47 @@ func NewNonInteractiveGenerator() *ConfigGenerator {
 // GenerateClientConfig generates a client configuration.
 func (g *ConfigGenerator) GenerateClientConfig(opts GenerateOptions) (*ClientConfig, error) {
 	cfg := DefaultClientConfig()
-	
+
 	if g.isInteractive {
 		return g.generateClientConfigInteractive(cfg)
 	}
-	
+
 	return g.generateClientConfigFromOptions(cfg, opts)
 }
 
 // GenerateServerConfig generates a server configuration.
 func (g *ConfigGenerator) GenerateServerConfig(opts GenerateOptions) (*ServerConfig, error) {
 	cfg := DefaultServerConfig()
-	
+
 	if g.isInteractive {
 		return g.generateServerConfigInteractive(cfg)
 	}
-	
+
 	return g.generateServerConfigFromOptions(cfg, opts)
 }
 
 // generateClientConfigInteractive creates client config via interactive prompts.
 func (g *ConfigGenerator) generateClientConfigInteractive(cfg *ClientConfig) (*ClientConfig, error) {
 	scanner := bufio.NewScanner(g.reader)
-	
+
 	g.printLine("\n🔧 Half-Tunnel Client Configuration Generator\n")
-	
+
 	// Client name
 	cfg.Client.Name = g.promptWithDefault(scanner, "Enter a name for this client", cfg.Client.Name)
-	
+
 	// Upstream URL
 	cfg.Client.Upstream.URL = g.promptWithDefault(scanner, "Upstream server URL", cfg.Client.Upstream.URL)
-	
-	// Downstream URL  
+
+	// Downstream URL
 	cfg.Client.Downstream.URL = g.promptWithDefault(scanner, "Downstream server URL", cfg.Client.Downstream.URL)
-	
+
 	// TLS verification
 	if g.promptYesNo(scanner, "Enable TLS verification?", true) {
 		cfg.Client.Upstream.TLS.Enabled = true
 		cfg.Client.Upstream.TLS.SkipVerify = false
 		cfg.Client.Downstream.TLS.Enabled = true
 		cfg.Client.Downstream.TLS.SkipVerify = false
-		
+
 		caFile := g.promptWithDefault(scanner, "CA certificate path (optional, press Enter to skip)", "")
 		if caFile != "" {
 			cfg.Client.Upstream.TLS.CAFile = caFile
@@ -112,7 +112,7 @@ func (g *ConfigGenerator) generateClientConfigInteractive(cfg *ClientConfig) (*C
 		cfg.Client.Upstream.TLS.SkipVerify = true
 		cfg.Client.Downstream.TLS.SkipVerify = true
 	}
-	
+
 	// Port forwarding
 	g.printLine("\n📡 Port Forwarding Rules\n")
 	var portForwards []interface{}
@@ -126,14 +126,14 @@ func (g *ConfigGenerator) generateClientConfigInteractive(cfg *ClientConfig) (*C
 			g.printLine("Invalid port number, skipping...\n")
 			continue
 		}
-		
+
 		if g.promptYesNo(scanner, "Same port on remote?", true) {
 			portForwards = append(portForwards, port)
 		} else {
 			remoteHost := g.promptWithDefault(scanner, "Remote host (leave empty for dynamic)", "")
 			remotePortStr := g.promptWithDefault(scanner, "Remote port", portStr)
 			remotePort, _ := strconv.Atoi(remotePortStr)
-			
+
 			pf := map[string]interface{}{
 				"listen_port": port,
 				"remote_port": remotePort,
@@ -145,7 +145,7 @@ func (g *ConfigGenerator) generateClientConfigInteractive(cfg *ClientConfig) (*C
 		}
 	}
 	cfg.PortForwards = portForwards
-	
+
 	// SOCKS5
 	g.printLine("\n🧦 SOCKS5 Proxy\n")
 	cfg.SOCKS5.Enabled = g.promptYesNo(scanner, "Enable SOCKS5 proxy?", true)
@@ -155,7 +155,7 @@ func (g *ConfigGenerator) generateClientConfigInteractive(cfg *ClientConfig) (*C
 			cfg.SOCKS5.ListenPort = port
 		}
 	}
-	
+
 	return cfg, nil
 }
 
@@ -170,7 +170,7 @@ func (g *ConfigGenerator) generateClientConfigFromOptions(cfg *ClientConfig, opt
 	if opts.DownstreamURL != "" {
 		cfg.Client.Downstream.URL = opts.DownstreamURL
 	}
-	
+
 	// Parse port forwards
 	var portForwards []interface{}
 	for _, pf := range opts.PortForwards {
@@ -198,54 +198,54 @@ func (g *ConfigGenerator) generateClientConfigFromOptions(cfg *ClientConfig, opt
 		}
 	}
 	cfg.PortForwards = portForwards
-	
+
 	cfg.SOCKS5.Enabled = opts.EnableSOCKS5
 	if opts.SOCKS5Port > 0 {
 		cfg.SOCKS5.ListenPort = opts.SOCKS5Port
 		cfg.SOCKS5.Enabled = true
 	}
-	
+
 	return cfg, nil
 }
 
 // generateServerConfigInteractive creates server config via interactive prompts.
 func (g *ConfigGenerator) generateServerConfigInteractive(cfg *ServerConfig) (*ServerConfig, error) {
 	scanner := bufio.NewScanner(g.reader)
-	
+
 	g.printLine("\n🔧 Half-Tunnel Server Configuration Generator\n")
-	
+
 	// Server name
 	cfg.Server.Name = g.promptWithDefault(scanner, "Enter a name for this server", cfg.Server.Name)
-	
+
 	// Upstream port
 	upstreamPortStr := g.promptWithDefault(scanner, "Upstream listener port", strconv.Itoa(cfg.Server.Upstream.Port))
 	if port, err := strconv.Atoi(upstreamPortStr); err == nil {
 		cfg.Server.Upstream.Port = port
 	}
-	
+
 	// Downstream port
 	downstreamPortStr := g.promptWithDefault(scanner, "Downstream listener port", strconv.Itoa(cfg.Server.Downstream.Port))
 	if port, err := strconv.Atoi(downstreamPortStr); err == nil {
 		cfg.Server.Downstream.Port = port
 	}
-	
+
 	// TLS
 	if g.promptYesNo(scanner, "Enable TLS?", false) {
 		cfg.Server.Upstream.TLS.Enabled = true
 		cfg.Server.Downstream.TLS.Enabled = true
-		
+
 		cfg.Server.Upstream.TLS.CertFile = g.promptWithDefault(scanner, "TLS certificate path", "/etc/half-tunnel/certs/server.crt")
 		cfg.Server.Upstream.TLS.KeyFile = g.promptWithDefault(scanner, "TLS key path", "/etc/half-tunnel/certs/server.key")
 		cfg.Server.Downstream.TLS.CertFile = cfg.Server.Upstream.TLS.CertFile
 		cfg.Server.Downstream.TLS.KeyFile = cfg.Server.Upstream.TLS.KeyFile
 	}
-	
+
 	// Max sessions
 	maxSessionsStr := g.promptWithDefault(scanner, "Maximum concurrent sessions", strconv.Itoa(cfg.Tunnel.Session.MaxSessions))
 	if maxSessions, err := strconv.Atoi(maxSessionsStr); err == nil {
 		cfg.Tunnel.Session.MaxSessions = maxSessions
 	}
-	
+
 	return cfg, nil
 }
 
@@ -270,7 +270,7 @@ func (g *ConfigGenerator) generateServerConfigFromOptions(cfg *ServerConfig, opt
 		cfg.Server.Upstream.TLS.KeyFile = opts.TLSKey
 		cfg.Server.Downstream.TLS.KeyFile = opts.TLSKey
 	}
-	
+
 	return cfg, nil
 }
 
@@ -281,7 +281,7 @@ func (g *ConfigGenerator) promptWithDefault(scanner *bufio.Scanner, prompt, defa
 	} else {
 		g.printLine(fmt.Sprintf("? %s: ", prompt))
 	}
-	
+
 	if scanner.Scan() {
 		input := strings.TrimSpace(scanner.Text())
 		if input != "" {
@@ -298,7 +298,7 @@ func (g *ConfigGenerator) promptYesNo(scanner *bufio.Scanner, prompt string, def
 		defaultStr = "y/N"
 	}
 	g.printLine(fmt.Sprintf("? %s (%s): ", prompt, defaultStr))
-	
+
 	if scanner.Scan() {
 		input := strings.ToLower(strings.TrimSpace(scanner.Text()))
 		if input == "" {
@@ -339,6 +339,8 @@ func RenderClientConfigYAML(cfg *ClientConfig) (string, error) {
 	tmpl := `# Half-Tunnel Client Configuration
 client:
   name: "{{.Client.Name}}"
+  exit_on_port_in_use: {{.Client.ExitOnPortInUse}}
+  listen_on_connect: {{.Client.ListenOnConnect}}
   upstream:
     url: "{{.Client.Upstream.URL}}"
     tls:
@@ -415,19 +417,19 @@ observability:
     port: {{.Observability.Metrics.Port}}
     path: "{{.Observability.Metrics.Path}}"
 `
-	
+
 	// Prepare port forwards for rendering
 	type renderData struct {
 		*ClientConfig
 		PortForwardsRendered []string
 	}
 	data := renderData{ClientConfig: cfg}
-	
+
 	portForwards, err := cfg.GetPortForwards()
 	if err != nil {
 		return "", err
 	}
-	
+
 	for _, pf := range portForwards {
 		if pf.RemoteHost == "127.0.0.1" && pf.ListenPort == pf.RemotePort && pf.ListenHost == "0.0.0.0" {
 			data.PortForwardsRendered = append(data.PortForwardsRendered, strconv.Itoa(pf.ListenPort))
@@ -449,17 +451,17 @@ observability:
 			data.PortForwardsRendered = append(data.PortForwardsRendered, "{"+strings.Join(parts, ", ")+"}")
 		}
 	}
-	
+
 	t, err := template.New("client").Parse(tmpl)
 	if err != nil {
 		return "", err
 	}
-	
+
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
 		return "", err
 	}
-	
+
 	return buf.String(), nil
 }
 
@@ -468,6 +470,7 @@ func RenderServerConfigYAML(cfg *ServerConfig) (string, error) {
 	tmpl := `# Half-Tunnel Server Configuration
 server:
   name: "{{.Server.Name}}"
+  exit_on_port_in_use: {{.Server.ExitOnPortInUse}}
   upstream:
     host: "{{.Server.Upstream.Host}}"
     port: {{.Server.Upstream.Port}}
@@ -530,17 +533,17 @@ observability:
     port: {{.Observability.Health.Port}}
     path: "{{.Observability.Health.Path}}"
 `
-	
+
 	t, err := template.New("server").Parse(tmpl)
 	if err != nil {
 		return "", err
 	}
-	
+
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, cfg); err != nil {
 		return "", err
 	}
-	
+
 	return buf.String(), nil
 }
 
@@ -574,7 +577,7 @@ func ValidateConfigFile(path string, configType string) error {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return fmt.Errorf("config file not found: %s", path)
 	}
-	
+
 	switch configType {
 	case "client":
 		cfg, err := LoadClientConfig(path)

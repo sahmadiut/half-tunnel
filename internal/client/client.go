@@ -9,11 +9,13 @@ package client
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,6 +48,10 @@ type Config struct {
 	SOCKS5Addr string
 	// SOCKS5Enabled controls whether SOCKS5 proxy is started
 	SOCKS5Enabled bool
+	// ExitOnPortInUse controls whether to stop when local listener ports are already in use
+	ExitOnPortInUse bool
+	// ListenOnConnect controls whether local listeners start only after connection
+	ListenOnConnect bool
 	// SOCKS5Username and SOCKS5Password for optional authentication
 	SOCKS5Username string
 	SOCKS5Password string
@@ -75,6 +81,8 @@ func DefaultConfig() *Config {
 		DownstreamURL:    "ws://localhost:8081/downstream",
 		SOCKS5Addr:       "127.0.0.1:1080",
 		SOCKS5Enabled:    true,
+		ExitOnPortInUse:  false,
+		ListenOnConnect:  false,
 		PortForwards:     []PortForward{},
 		ReconnectEnabled: true,
 		ReconnectConfig:  retry.DefaultConfig(),
@@ -104,6 +112,7 @@ type Client struct {
 
 	// Port forward listeners
 	portForwardListeners []net.Listener
+	listenersStarted     bool
 
 	// Stream management
 	streamConns   map[uint32]*streamConn
@@ -198,6 +207,7 @@ func (c *Client) Start(ctx context.Context) error {
 	// Set packet handler for sending through upstream
 	c.mux.SetPacketHandler(c.sendPacket)
 
+	connected := false
 	if err := c.connect(ctx); err != nil {
 		if c.shouldReconnect() && ctx.Err() == nil {
 			c.log.Warn().Err(err).Msg("Initial connection failed, starting reconnect loop")
@@ -208,6 +218,7 @@ func (c *Client) Start(ctx context.Context) error {
 			return err
 		}
 	} else {
+		connected = true
 		// Start downstream reader goroutine
 		c.wg.Add(1)
 		go c.readDownstream(ctx)
@@ -218,36 +229,11 @@ func (c *Client) Start(ctx context.Context) error {
 		go c.keepaliveLoop(ctx)
 	}
 
-	// Start SOCKS5 server if enabled
-	if c.config.SOCKS5Enabled {
-		socks5Config := &socks5.Config{
-			ListenAddr: c.config.SOCKS5Addr,
-			Username:   c.config.SOCKS5Username,
-			Password:   c.config.SOCKS5Password,
-		}
-		c.socks5 = socks5.NewServer(socks5Config, c.handleConnect)
-
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			if err := c.socks5.ListenAndServe(ctx); err != nil {
-				c.log.Error().Err(err).Msg("SOCKS5 server error")
-			}
-		}()
-
-		c.log.Info().
-			Str("addr", c.config.SOCKS5Addr).
-			Msg("SOCKS5 proxy started")
-	}
-
-	// Start port forwarding listeners
-	for _, pf := range c.config.PortForwards {
-		if err := c.startPortForward(ctx, pf); err != nil {
-			c.log.Error().Err(err).
-				Str("name", pf.Name).
-				Int("listen_port", pf.ListenPort).
-				Msg("Failed to start port forward")
-			// Continue with other port forwards even if one fails
+	if !c.config.ListenOnConnect || connected {
+		if err := c.startLocalListeners(ctx); err != nil {
+			cancel()
+			c.cleanup()
+			return err
 		}
 	}
 
@@ -298,7 +284,9 @@ func (c *Client) cleanup() {
 	// Close SOCKS5 server
 	if c.socks5 != nil {
 		c.socks5.Close()
+		c.socks5 = nil
 	}
+	c.listenersStarted = false
 
 	// Close port forward listeners
 	for _, listener := range c.portForwardListeners {
@@ -872,6 +860,9 @@ func (c *Client) handleReconnect(ctx context.Context, source string) {
 	}
 
 	c.log.Warn().Str("source", source).Msg("Connection lost, attempting reconnect")
+	if c.config.ListenOnConnect {
+		c.stopLocalListeners()
+	}
 	c.cleanupConnections()
 	c.closeAllStreams()
 	c.mux.Close()
@@ -890,6 +881,15 @@ func (c *Client) handleReconnect(ctx context.Context, source string) {
 			c.log.Info().Str("session_id", c.session.ID.String()).Msg("Reconnected to server")
 			c.wg.Add(1)
 			go c.readDownstream(ctx)
+			if c.config.ListenOnConnect {
+				if startErr := c.startLocalListeners(ctx); startErr != nil {
+					c.log.Error().Err(startErr).Msg("Failed to start local listeners after reconnect")
+					if c.shouldExitOnListenError(startErr) {
+						_ = c.Stop()
+						return
+					}
+				}
+			}
 			return
 		}
 
@@ -934,6 +934,102 @@ func formatConnectPayload(host string, port uint16) []byte {
 	payload[portOffset+1] = byte(port)
 
 	return payload
+}
+
+func (c *Client) startLocalListeners(ctx context.Context) error {
+	c.mu.Lock()
+	if c.listenersStarted {
+		c.mu.Unlock()
+		return nil
+	}
+	c.listenersStarted = true
+	c.mu.Unlock()
+
+	if c.config.SOCKS5Enabled {
+		if err := c.startSOCKS5(ctx); err != nil {
+			if c.shouldExitOnListenError(err) {
+				c.stopLocalListeners()
+				return err
+			}
+			c.log.Error().Err(err).Msg("SOCKS5 server error")
+		} else {
+			c.log.Info().
+				Str("addr", c.config.SOCKS5Addr).
+				Msg("SOCKS5 proxy started")
+		}
+	}
+
+	for _, pf := range c.config.PortForwards {
+		if err := c.startPortForward(ctx, pf); err != nil {
+			if c.shouldExitOnListenError(err) {
+				c.stopLocalListeners()
+				return err
+			}
+			c.log.Error().Err(err).
+				Str("name", pf.Name).
+				Int("listen_port", pf.ListenPort).
+				Msg("Failed to start port forward")
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) startSOCKS5(ctx context.Context) error {
+	listener, err := net.Listen("tcp", c.config.SOCKS5Addr)
+	if err != nil {
+		return err
+	}
+
+	socks5Config := &socks5.Config{
+		ListenAddr: c.config.SOCKS5Addr,
+		Username:   c.config.SOCKS5Username,
+		Password:   c.config.SOCKS5Password,
+	}
+	server := socks5.NewServer(socks5Config, c.handleConnect)
+
+	c.mu.Lock()
+	c.socks5 = server
+	c.mu.Unlock()
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		if err := server.Serve(ctx, listener); err != nil {
+			c.log.Error().Err(err).Msg("SOCKS5 server error")
+		}
+	}()
+
+	return nil
+}
+
+func (c *Client) stopLocalListeners() {
+	c.mu.Lock()
+	if !c.listenersStarted {
+		c.mu.Unlock()
+		return
+	}
+	socksServer := c.socks5
+	listeners := c.portForwardListeners
+	c.socks5 = nil
+	c.portForwardListeners = nil
+	c.listenersStarted = false
+	c.mu.Unlock()
+
+	if socksServer != nil {
+		socksServer.Close()
+	}
+	for _, listener := range listeners {
+		listener.Close()
+	}
+}
+
+func (c *Client) shouldExitOnListenError(err error) bool {
+	return c.config.ExitOnPortInUse && isAddrInUse(err)
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE)
 }
 
 // startPortForward starts a listener for a port forwarding rule.

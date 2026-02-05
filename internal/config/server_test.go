@@ -22,6 +22,9 @@ func TestDefaultServerConfig(t *testing.T) {
 	if cfg.Tunnel.Session.Timeout != 5*time.Minute {
 		t.Errorf("Expected session timeout 5m, got %v", cfg.Tunnel.Session.Timeout)
 	}
+	if cfg.Server.ExitOnPortInUse {
+		t.Error("Expected exit_on_port_in_use to default to false")
+	}
 }
 
 func TestServerConfigValidate(t *testing.T) {
