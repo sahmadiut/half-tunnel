@@ -167,12 +167,13 @@ func (s *Stream) GetChecksum() uint32 {
 	return s.Checksum
 }
 
-// updateChecksum updates a rolling CRC32 checksum with new data.
+// updateChecksum updates a rolling checksum with new data.
+// This is a simple rolling checksum for data integrity tracking, not a cryptographic hash.
 func updateChecksum(current uint32, data []byte) uint32 {
 	if len(data) == 0 {
 		return current
 	}
-	// Simple rolling checksum using CRC32-like algorithm
+	// Simple rolling checksum algorithm
 	for _, b := range data {
 		current = (current << 8) ^ uint32(b) ^ (current >> 24)
 	}

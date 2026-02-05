@@ -273,13 +273,14 @@ func (p *Packet) HasHMAC() bool {
 	return p.Flags&FlagHMAC != 0
 }
 
-// CalculateChecksum computes a CRC32 checksum of the packet's payload.
+// CalculateChecksum computes a simple rolling checksum of the packet's payload.
 // This can be used to verify data integrity after transmission.
+// Note: This is a simple checksum for integrity tracking, not a cryptographic hash.
 func (p *Packet) CalculateChecksum() uint32 {
 	if len(p.Payload) == 0 {
 		return 0
 	}
-	return crc32Checksum(p.Payload)
+	return rollingChecksum(p.Payload)
 }
 
 // VerifyChecksum verifies that the packet's payload matches the given checksum.
@@ -326,9 +327,9 @@ func (p *Packet) VerifyHeaderChecksum(checksum uint32) bool {
 	return p.CalculateHeaderChecksum() == checksum
 }
 
-// crc32Checksum computes a simple CRC32-like checksum of the data.
-// This is a simple rolling checksum implementation.
-func crc32Checksum(data []byte) uint32 {
+// rollingChecksum computes a simple rolling checksum of the data.
+// This is a basic checksum for data integrity tracking, not a cryptographic hash.
+func rollingChecksum(data []byte) uint32 {
 	var checksum uint32 = 0
 	for _, b := range data {
 		checksum = (checksum << 8) ^ uint32(b) ^ (checksum >> 24)
