@@ -1,11 +1,16 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/sahmadiut/half-tunnel/internal/mux"
+	"github.com/sahmadiut/half-tunnel/internal/protocol"
+	"github.com/sahmadiut/half-tunnel/internal/session"
 	"github.com/sahmadiut/half-tunnel/internal/socks5"
 	"github.com/sahmadiut/half-tunnel/internal/transport"
 )
@@ -189,4 +194,155 @@ func TestStartTriggersReconnectOnFailure(t *testing.T) {
 	}
 
 	_ = client.Stop()
+}
+
+// mockConn is a mock net.Conn that captures written data.
+type mockConn struct {
+	writeBuf bytes.Buffer
+	mu       sync.Mutex
+}
+
+func (c *mockConn) Read(b []byte) (n int, err error)   { return 0, nil }
+func (c *mockConn) Write(b []byte) (n int, err error)  { c.mu.Lock(); defer c.mu.Unlock(); return c.writeBuf.Write(b) }
+func (c *mockConn) Close() error                       { return nil }
+func (c *mockConn) LocalAddr() net.Addr                { return nil }
+func (c *mockConn) RemoteAddr() net.Addr               { return nil }
+func (c *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (c *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *mockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+func (c *mockConn) getWrittenData() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.writeBuf.Bytes()
+}
+
+// TestHandleDownstreamPacketOutOfOrder verifies that packets arriving out of order
+// are reassembled correctly before being written to the client connection.
+func TestHandleDownstreamPacketOutOfOrder(t *testing.T) {
+	config := DefaultConfig()
+	config.SOCKS5Enabled = false
+	config.ReconnectEnabled = false
+
+	client := New(config, nil)
+
+	// Set up session and multiplexer
+	client.session = session.New()
+	client.mux = mux.NewMultiplexer(client.session)
+	client.dataFlowMonitor = NewDataFlowMonitor(config.DataFlowMonitor, client.log)
+
+	// Create a mock connection to capture written data
+	mockClientConn := &mockConn{}
+
+	// Open a stream and register the mock connection
+	streamID, err := client.mux.OpenStream()
+	if err != nil {
+		t.Fatalf("Failed to open stream: %v", err)
+	}
+
+	sc := &streamConn{
+		conn:     mockClientConn,
+		streamID: streamID,
+		done:     make(chan struct{}),
+	}
+
+	client.streamConns = map[uint32]*streamConn{
+		streamID: sc,
+	}
+
+	// Create packets with data that arrives out of order
+	// Packet 2 arrives first, then Packet 0, then Packet 1
+	pkt0, _ := protocol.NewPacket(client.session.ID, streamID, protocol.FlagData, []byte("AAA"))
+	pkt0.SeqNum = 0
+
+	pkt1, _ := protocol.NewPacket(client.session.ID, streamID, protocol.FlagData, []byte("BBB"))
+	pkt1.SeqNum = 1
+
+	pkt2, _ := protocol.NewPacket(client.session.ID, streamID, protocol.FlagData, []byte("CCC"))
+	pkt2.SeqNum = 2
+
+	// Simulate packets arriving out of order: 2, 0, 1
+	// Packet 2 arrives first - should NOT be written yet (waiting for 0)
+	client.handleDownstreamPacket(pkt2)
+	data := mockClientConn.getWrittenData()
+	if len(data) != 0 {
+		t.Errorf("Expected no data written after packet 2 (out of order), got %d bytes: %s", len(data), string(data))
+	}
+
+	// Packet 0 arrives - should trigger flush of packet 0 only
+	client.handleDownstreamPacket(pkt0)
+	data = mockClientConn.getWrittenData()
+	if string(data) != "AAA" {
+		t.Errorf("Expected 'AAA' after packet 0, got '%s'", string(data))
+	}
+
+	// Packet 1 arrives - should flush packet 1 and then packet 2 (which was buffered)
+	client.handleDownstreamPacket(pkt1)
+	data = mockClientConn.getWrittenData()
+	if string(data) != "AAABBBCCC" {
+		t.Errorf("Expected 'AAABBBCCC' after all packets, got '%s'", string(data))
+	}
+}
+
+// TestHandleDownstreamPacketInOrder verifies that packets arriving in order
+// are written immediately to the client connection.
+func TestHandleDownstreamPacketInOrder(t *testing.T) {
+	config := DefaultConfig()
+	config.SOCKS5Enabled = false
+	config.ReconnectEnabled = false
+
+	client := New(config, nil)
+
+	// Set up session and multiplexer
+	client.session = session.New()
+	client.mux = mux.NewMultiplexer(client.session)
+	client.dataFlowMonitor = NewDataFlowMonitor(config.DataFlowMonitor, client.log)
+
+	// Create a mock connection to capture written data
+	mockClientConn := &mockConn{}
+
+	// Open a stream and register the mock connection
+	streamID, err := client.mux.OpenStream()
+	if err != nil {
+		t.Fatalf("Failed to open stream: %v", err)
+	}
+
+	sc := &streamConn{
+		conn:     mockClientConn,
+		streamID: streamID,
+		done:     make(chan struct{}),
+	}
+
+	client.streamConns = map[uint32]*streamConn{
+		streamID: sc,
+	}
+
+	// Create packets that arrive in order
+	pkt0, _ := protocol.NewPacket(client.session.ID, streamID, protocol.FlagData, []byte("First"))
+	pkt0.SeqNum = 0
+
+	pkt1, _ := protocol.NewPacket(client.session.ID, streamID, protocol.FlagData, []byte("Second"))
+	pkt1.SeqNum = 1
+
+	pkt2, _ := protocol.NewPacket(client.session.ID, streamID, protocol.FlagData, []byte("Third"))
+	pkt2.SeqNum = 2
+
+	// Process packets in order
+	client.handleDownstreamPacket(pkt0)
+	data := mockClientConn.getWrittenData()
+	if string(data) != "First" {
+		t.Errorf("Expected 'First' after packet 0, got '%s'", string(data))
+	}
+
+	client.handleDownstreamPacket(pkt1)
+	data = mockClientConn.getWrittenData()
+	if string(data) != "FirstSecond" {
+		t.Errorf("Expected 'FirstSecond' after packet 1, got '%s'", string(data))
+	}
+
+	client.handleDownstreamPacket(pkt2)
+	data = mockClientConn.getWrittenData()
+	if string(data) != "FirstSecondThird" {
+		t.Errorf("Expected 'FirstSecondThird' after packet 2, got '%s'", string(data))
+	}
 }
