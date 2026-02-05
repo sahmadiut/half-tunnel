@@ -40,12 +40,13 @@ jobs:
           mkdir -p dist
           go build -ldflags="${LDFLAGS}" -o dist/ht-client ./cmd/client
           go build -ldflags="${LDFLAGS}" -o dist/ht-server ./cmd/server
+          go build -ldflags="${LDFLAGS}" -o dist/ht ./cmd/ht
           go build -ldflags="${LDFLAGS}" -o dist/half-tunnel ./cmd/half-tunnel
           
           # Create tarball
           cd dist
-          tar -czvf half-tunnel-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ht-client ht-server half-tunnel
-          rm ht-client ht-server half-tunnel
+          tar -czvf half-tunnel-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz ht-client ht-server ht half-tunnel
+          rm ht-client ht-server ht half-tunnel
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
