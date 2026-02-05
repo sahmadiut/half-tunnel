@@ -496,6 +496,7 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 			c.log.Error().Err(err).
 				Uint32("stream_id", pkt.StreamID).
 				Msg("Error handling packet in multiplexer")
+			c.closeStream(pkt.StreamID)
 			return
 		}
 
@@ -505,6 +506,7 @@ func (c *Client) handleDownstreamPacket(pkt *protocol.Packet) {
 			c.log.Error().Err(err).
 				Uint32("stream_id", pkt.StreamID).
 				Msg("Error reading from stream buffer")
+			c.closeStream(pkt.StreamID)
 			return
 		}
 
