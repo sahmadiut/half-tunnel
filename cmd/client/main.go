@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/sahmadiut/half-tunnel/internal/client"
 	"github.com/sahmadiut/half-tunnel/internal/config"
 	"github.com/sahmadiut/half-tunnel/internal/metrics"
@@ -30,6 +31,7 @@ func main() {
 	// Parse command line flags
 	configPath := flag.String("config", "", "Path to configuration file")
 	showVersion := flag.Bool("version", false, "Show version information")
+	hotReload := flag.Bool("hot-reload", false, "Enable hot reload of configuration file")
 	flag.Parse()
 
 	if *showVersion {
@@ -65,23 +67,44 @@ func main() {
 		Str("version", version).
 		Str("upstream", cfg.Client.Upstream.URL).
 		Str("downstream", cfg.Client.Downstream.URL).
+		Bool("hot_reload", *hotReload).
 		Msg("Starting Half-Tunnel client")
 
 	// Set up context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
+	// Handle shutdown and reload signals
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigCh)
 
+	// Track the current client for reloading
+	var currentClient *client.Client
+
 	go func() {
-		select {
-		case sig := <-sigCh:
-			log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
-			cancel()
-		case <-ctx.Done():
+		for {
+			select {
+			case sig := <-sigCh:
+				switch sig {
+				case syscall.SIGHUP:
+					log.Info().Msg("Received SIGHUP, reloading configuration...")
+					if currentClient != nil {
+						// Stop the current client
+						_ = currentClient.Stop()
+					}
+					// Signal restart by canceling and exiting - systemd will restart
+					log.Info().Msg("Config reload requested - restarting service")
+					cancel()
+					return
+				case syscall.SIGINT, syscall.SIGTERM:
+					log.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
+					cancel()
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -156,9 +179,47 @@ func main() {
 
 	// Create and start the client
 	c := client.New(clientConfig, log)
+	currentClient = c
 	if err := c.Start(ctx); err != nil {
 		log.Error().Err(err).Msg("Failed to start client")
 		os.Exit(1)
+	}
+
+	// Start hot reload watcher if enabled
+	if *hotReload && *configPath != "" {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to create config watcher, hot reload disabled")
+		} else {
+			defer watcher.Close()
+			if err := watcher.Add(*configPath); err != nil {
+				log.Warn().Err(err).Str("path", *configPath).Msg("Failed to watch config file")
+			} else {
+				log.Info().Str("path", *configPath).Msg("Watching config file for changes")
+				go func() {
+					for {
+						select {
+						case event, ok := <-watcher.Events:
+							if !ok {
+								return
+							}
+							if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
+								log.Info().Str("path", event.Name).Msg("Config file changed, triggering reload...")
+								// Send SIGHUP to self to trigger reload
+								_ = syscall.Kill(syscall.Getpid(), syscall.SIGHUP)
+							}
+						case err, ok := <-watcher.Errors:
+							if !ok {
+								return
+							}
+							log.Warn().Err(err).Msg("Config watcher error")
+						case <-ctx.Done():
+							return
+						}
+					}
+				}()
+			}
+		}
 	}
 
 	// Start metrics server if enabled

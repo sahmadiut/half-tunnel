@@ -3,6 +3,7 @@ bin/
 /server
 /client
 /half-tunnel
+/ht
 *.exe
 *.exe~
 *.dll

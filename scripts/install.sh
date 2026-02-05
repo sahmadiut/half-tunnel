@@ -110,7 +110,7 @@ download_and_install() {
     tar -xzf "${tmp_dir}/${filename}" -C "$tmp_dir"
 
     # Verify binaries exist
-    for binary in ht-client ht-server half-tunnel; do
+    for binary in ht-client ht-server half-tunnel ht; do
         if [ ! -f "${tmp_dir}/${binary}" ]; then
             error "Binary ${binary} not found in archive"
         fi
@@ -132,7 +132,7 @@ download_and_install() {
 
     $SUDO mkdir -p "$INSTALL_DIR"
     
-    for binary in ht-client ht-server half-tunnel; do
+    for binary in ht-client ht-server half-tunnel ht; do
         $SUDO cp "${tmp_dir}/${binary}" "${INSTALL_DIR}/${binary}"
         $SUDO chmod +x "${INSTALL_DIR}/${binary}"
     done
@@ -144,7 +144,7 @@ verify_installation() {
     
     local failures=0
     
-    for binary in ht-client ht-server half-tunnel; do
+    for binary in ht-client ht-server half-tunnel ht; do
         if [ -x "${INSTALL_DIR}/${binary}" ]; then
             version_output=$("${INSTALL_DIR}/${binary}" -version 2>&1 || true)
             success "$binary installed: $version_output"
@@ -280,6 +280,14 @@ print_usage() {
     echo ""
     echo "  5. Use the SOCKS5 proxy:"
     echo "     curl --socks5 127.0.0.1:1080 https://example.com"
+    echo ""
+    echo "Service Management (ht):"
+    echo "  ht c install --config /etc/half-tunnel/client.yml   # Install client service"
+    echo "  ht s install --config /etc/half-tunnel/server.yml   # Install server service"
+    echo "  ht c start | stop | restart                         # Control client service"
+    echo "  ht s start | stop | restart                         # Control server service"
+    echo "  ht c logs                                            # View client logs (follow mode)"
+    echo "  ht s logs                                            # View server logs (follow mode)"
     echo ""
     echo "Documentation: https://github.com/${REPO}"
     echo ""
