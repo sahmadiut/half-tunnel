@@ -272,3 +272,66 @@ func (p *Packet) IsReconnect() bool {
 func (p *Packet) HasHMAC() bool {
 	return p.Flags&FlagHMAC != 0
 }
+
+// CalculateChecksum computes a CRC32 checksum of the packet's payload.
+// This can be used to verify data integrity after transmission.
+func (p *Packet) CalculateChecksum() uint32 {
+	if len(p.Payload) == 0 {
+		return 0
+	}
+	return crc32Checksum(p.Payload)
+}
+
+// VerifyChecksum verifies that the packet's payload matches the given checksum.
+// Returns true if the checksum matches, false otherwise.
+func (p *Packet) VerifyChecksum(checksum uint32) bool {
+	return p.CalculateChecksum() == checksum
+}
+
+// CalculateHeaderChecksum computes a checksum including header fields.
+// This provides additional integrity verification for the entire packet structure.
+func (p *Packet) CalculateHeaderChecksum() uint32 {
+	// Create a buffer with header fields
+	var checksum uint32 = 0
+	
+	// Include session ID
+	for _, b := range p.SessionID {
+		checksum = (checksum << 8) ^ uint32(b) ^ (checksum >> 24)
+	}
+	
+	// Include stream ID
+	checksum = (checksum << 8) ^ uint32(p.StreamID&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((p.StreamID>>8)&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((p.StreamID>>16)&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((p.StreamID>>24)&0xFF) ^ (checksum >> 24)
+	
+	// Include sequence number
+	checksum = (checksum << 8) ^ uint32(p.SeqNum&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((p.SeqNum>>8)&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((p.SeqNum>>16)&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((p.SeqNum>>24)&0xFF) ^ (checksum >> 24)
+	
+	// Include payload checksum
+	payloadChecksum := p.CalculateChecksum()
+	checksum = (checksum << 8) ^ uint32(payloadChecksum&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((payloadChecksum>>8)&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((payloadChecksum>>16)&0xFF) ^ (checksum >> 24)
+	checksum = (checksum << 8) ^ uint32((payloadChecksum>>24)&0xFF) ^ (checksum >> 24)
+	
+	return checksum
+}
+
+// VerifyHeaderChecksum verifies the packet's header checksum.
+func (p *Packet) VerifyHeaderChecksum(checksum uint32) bool {
+	return p.CalculateHeaderChecksum() == checksum
+}
+
+// crc32Checksum computes a simple CRC32-like checksum of the data.
+// This is a simple rolling checksum implementation.
+func crc32Checksum(data []byte) uint32 {
+	var checksum uint32 = 0
+	for _, b := range data {
+		checksum = (checksum << 8) ^ uint32(b) ^ (checksum >> 24)
+	}
+	return checksum
+}

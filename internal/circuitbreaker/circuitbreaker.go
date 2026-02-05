@@ -266,3 +266,129 @@ func (cb *CircuitBreaker) Stats() Stats {
 		OpenedAt:         cb.openedAt,
 	}
 }
+
+// DestinationBreaker manages per-destination circuit breakers.
+// This allows different destinations to fail independently without affecting others.
+type DestinationBreaker struct {
+	breakers map[string]*CircuitBreaker
+	config   *Config
+	mu       sync.RWMutex
+}
+
+// NewDestinationBreaker creates a new DestinationBreaker with the given configuration.
+// The configuration is used as the default for all new per-destination circuit breakers.
+func NewDestinationBreaker(config *Config) *DestinationBreaker {
+	if config == nil {
+		config = DefaultConfig()
+	}
+	return &DestinationBreaker{
+		breakers: make(map[string]*CircuitBreaker),
+		config:   config,
+	}
+}
+
+// Get returns the circuit breaker for the specified destination.
+// If no circuit breaker exists for the destination, a new one is created.
+func (db *DestinationBreaker) Get(dest string) *CircuitBreaker {
+	// First try with read lock for the common case
+	db.mu.RLock()
+	cb, exists := db.breakers[dest]
+	db.mu.RUnlock()
+	if exists {
+		return cb
+	}
+
+	// Need to create a new circuit breaker
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	cb, exists = db.breakers[dest]
+	if exists {
+		return cb
+	}
+
+	// Create new circuit breaker for this destination
+	cb = New(db.config)
+	db.breakers[dest] = cb
+	return cb
+}
+
+// Remove removes the circuit breaker for the specified destination.
+func (db *DestinationBreaker) Remove(dest string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(db.breakers, dest)
+}
+
+// Reset resets all circuit breakers to closed state.
+func (db *DestinationBreaker) Reset() {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for _, cb := range db.breakers {
+		cb.Reset()
+	}
+}
+
+// ResetDestination resets the circuit breaker for a specific destination.
+func (db *DestinationBreaker) ResetDestination(dest string) {
+	db.mu.RLock()
+	cb, exists := db.breakers[dest]
+	db.mu.RUnlock()
+	if exists {
+		cb.Reset()
+	}
+}
+
+// DestinationStats contains statistics for a destination.
+type DestinationStats struct {
+	Destination string
+	Stats       Stats
+}
+
+// AllStats returns statistics for all destinations.
+func (db *DestinationBreaker) AllStats() []DestinationStats {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	stats := make([]DestinationStats, 0, len(db.breakers))
+	for dest, cb := range db.breakers {
+		stats = append(stats, DestinationStats{
+			Destination: dest,
+			Stats:       cb.Stats(),
+		})
+	}
+	return stats
+}
+
+// Count returns the number of tracked destinations.
+func (db *DestinationBreaker) Count() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return len(db.breakers)
+}
+
+// IsAllowed checks if a request to the destination should be allowed.
+func (db *DestinationBreaker) IsAllowed(dest string) bool {
+	return db.Get(dest).Allow()
+}
+
+// RecordSuccess records a successful request to a destination.
+func (db *DestinationBreaker) RecordSuccess(dest string) {
+	db.Get(dest).RecordSuccess()
+}
+
+// RecordFailure records a failed request to a destination.
+func (db *DestinationBreaker) RecordFailure(dest string) {
+	db.Get(dest).RecordFailure()
+}
+
+// Execute executes a function through the circuit breaker for a destination.
+func (db *DestinationBreaker) Execute(dest string, fn func() error) error {
+	return db.Get(dest).Execute(fn)
+}
+
+// ExecuteWithContext executes a function through the circuit breaker with context support.
+func (db *DestinationBreaker) ExecuteWithContext(ctx context.Context, dest string, fn func(ctx context.Context) error) error {
+	return db.Get(dest).ExecuteWithContext(ctx, fn)
+}

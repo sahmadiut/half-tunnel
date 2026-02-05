@@ -175,3 +175,177 @@ func TestStateString(t *testing.T) {
 		}
 	}
 }
+
+// Tests for new Phase 3 features
+
+func TestStreamRecordSendReceive(t *testing.T) {
+	stream := NewStream(1)
+
+	// Initial values
+	state := stream.GetStreamState()
+	if state.BytesSent != 0 || state.BytesRecv != 0 {
+		t.Error("Expected initial bytes to be 0")
+	}
+
+	// Record send
+	testData := []byte("hello world")
+	stream.RecordSend(int64(len(testData)), testData)
+
+	state = stream.GetStreamState()
+	if state.BytesSent != int64(len(testData)) {
+		t.Errorf("Expected BytesSent %d, got %d", len(testData), state.BytesSent)
+	}
+	if state.Checksum == 0 {
+		t.Error("Expected non-zero checksum after send")
+	}
+
+	// Record receive
+	recvData := []byte("response")
+	stream.RecordReceive(int64(len(recvData)), recvData)
+
+	state = stream.GetStreamState()
+	if state.BytesRecv != int64(len(recvData)) {
+		t.Errorf("Expected BytesRecv %d, got %d", len(recvData), state.BytesRecv)
+	}
+}
+
+func TestStreamGetChecksum(t *testing.T) {
+	stream := NewStream(1)
+
+	// Initial checksum should be 0
+	if stream.GetChecksum() != 0 {
+		t.Error("Expected initial checksum to be 0")
+	}
+
+	// Send some data
+	stream.RecordSend(5, []byte("hello"))
+	checksum1 := stream.GetChecksum()
+
+	// Send more data, checksum should change
+	stream.RecordSend(5, []byte("world"))
+	checksum2 := stream.GetChecksum()
+
+	if checksum1 == checksum2 {
+		t.Error("Expected checksum to change after more data")
+	}
+}
+
+func TestStreamStateSnapshot(t *testing.T) {
+	stream := NewStream(42)
+	stream.SetState(StateActive)
+	stream.RecordSend(100, []byte("test data"))
+	stream.RecordReceive(50, []byte("resp"))
+
+	state := stream.GetStreamState()
+
+	if state.ID != 42 {
+		t.Errorf("Expected ID 42, got %d", state.ID)
+	}
+	if state.State != StateActive {
+		t.Errorf("Expected StateActive, got %v", state.State)
+	}
+	if state.BytesSent != 100 {
+		t.Errorf("Expected BytesSent 100, got %d", state.BytesSent)
+	}
+	if state.BytesRecv != 50 {
+		t.Errorf("Expected BytesRecv 50, got %d", state.BytesRecv)
+	}
+	if state.LastActivity.IsZero() {
+		t.Error("Expected non-zero LastActivity")
+	}
+}
+
+func TestSessionResumeStream(t *testing.T) {
+	session := New()
+
+	// Create a stream state to resume
+	state := StreamState{
+		ID:           10,
+		State:        StateActive,
+		SeqNum:       100,
+		AckNum:       50,
+		BytesSent:    1000,
+		BytesRecv:    500,
+		LastActivity: time.Now().Add(-time.Minute),
+		Checksum:     12345,
+	}
+
+	// Resume the stream
+	err := session.ResumeStream(state)
+	if err != nil {
+		t.Fatalf("ResumeStream failed: %v", err)
+	}
+
+	// Verify the stream was created with the correct state
+	stream, exists := session.GetExistingStream(10)
+	if !exists {
+		t.Fatal("Expected stream to exist after resume")
+	}
+
+	if stream.GetState() != StateActive {
+		t.Errorf("Expected StateActive, got %v", stream.GetState())
+	}
+
+	streamState := stream.GetStreamState()
+	if streamState.SeqNum != 100 {
+		t.Errorf("Expected SeqNum 100, got %d", streamState.SeqNum)
+	}
+	if streamState.BytesSent != 1000 {
+		t.Errorf("Expected BytesSent 1000, got %d", streamState.BytesSent)
+	}
+}
+
+func TestSessionResumeStreamAlreadyProgressed(t *testing.T) {
+	session := New()
+
+	// Create an existing stream with higher sequence numbers
+	existingStream := session.GetStream(10)
+	existingStream.mu.Lock()
+	existingStream.SeqNum = 200
+	existingStream.AckNum = 100
+	existingStream.mu.Unlock()
+
+	// Try to resume with lower sequence numbers
+	state := StreamState{
+		ID:     10,
+		SeqNum: 50,
+		AckNum: 25,
+	}
+
+	err := session.ResumeStream(state)
+	if err != ErrStreamAlreadyResumed {
+		t.Errorf("Expected ErrStreamAlreadyResumed, got %v", err)
+	}
+}
+
+func TestSessionGetAllStreamStates(t *testing.T) {
+	session := New()
+
+	// Create some streams
+	stream1 := session.GetStream(1)
+	stream1.RecordSend(100, []byte("data"))
+
+	stream2 := session.GetStream(2)
+	stream2.SetState(StateActive)
+	stream2.RecordReceive(50, []byte("resp"))
+
+	session.GetStream(3)
+
+	// Get all stream states
+	states := session.GetAllStreamStates()
+	if len(states) != 3 {
+		t.Fatalf("Expected 3 stream states, got %d", len(states))
+	}
+
+	// Verify we have all the expected stream IDs
+	foundIDs := make(map[uint32]bool)
+	for _, s := range states {
+		foundIDs[s.ID] = true
+	}
+
+	for _, id := range []uint32{1, 2, 3} {
+		if !foundIDs[id] {
+			t.Errorf("Expected to find stream ID %d", id)
+		}
+	}
+}
