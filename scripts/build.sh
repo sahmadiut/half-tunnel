@@ -19,5 +19,14 @@ go build -ldflags "${LDFLAGS}" -o bin/ht-client ./cmd/client
 echo "Building server..."
 go build -ldflags "${LDFLAGS}" -o bin/ht-server ./cmd/server
 
+
+# Build ht (Service Manager)
+echo "Building ht..."
+go build -ldflags "${LDFLAGS}" -o bin/ht ./cmd/ht
+
+# Build half-tunnel (CLI)
+echo "Building half-tunnel..."
+go build -ldflags "${LDFLAGS}" -o bin/half-tunnel ./cmd/half-tunnel
+
 echo "Build complete!"
 ls -la bin/
